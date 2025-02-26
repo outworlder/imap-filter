@@ -9,6 +9,8 @@ clap = "2.33"
 imap = "2.4"
 native-tls = "0.2"
 regex = "1.5"
+log = "0.4"
+env_logger = "0.9"
 
 [[bin]]
 name = "imap_filter"
