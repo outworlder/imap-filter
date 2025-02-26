@@ -4,9 +4,13 @@ extern crate imap;
 extern crate log;
 extern crate native_tls;
 extern crate regex;
+extern crate serde;
+extern crate toml;
 
 use log::{debug, error, info, trace, warn};
-use std::io::{self, Write};
+use serde::Deserialize;
+use std::fs::File;
+use std::io::{self, Read, Write};
 
 use clap::{App, Arg};
 use imap::Session;
@@ -15,6 +19,25 @@ use regex::Regex;
 use std::env;
 use std::net::TcpStream;
 use std::process;
+
+#[derive(Debug, Deserialize)]
+struct Config {
+    subject_rules: Vec<SubjectRule>,
+    #[serde(default)]
+    sender_rules: Vec<SenderRule>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubjectRule {
+    pattern: String,
+    description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SenderRule {
+    pattern: String,
+    description: Option<String>,
+}
 
 fn main() {
     // Initialize the logger
@@ -66,6 +89,14 @@ fn main() {
                 .help("Target folder for newsletters")
                 .required(true),
         )
+        .arg(
+            Arg::with_name("config")
+                .short("c")
+                .long("config")
+                .value_name("CONFIG_FILE")
+                .help("Path to TOML config file with subject regex patterns")
+                .takes_value(true),
+        )
         .get_matches();
 
     debug!("Command line arguments parsed successfully");
@@ -96,17 +127,84 @@ fn main() {
     debug!("Source folder: {}", source_folder);
     debug!("Target folder: {}", target_folder);
 
+    // Read config file if provided
+    let config = if let Some(config_path) = matches.value_of("config") {
+        debug!("Reading config file: {}", config_path);
+        match read_config(config_path) {
+            Ok(cfg) => {
+                debug!(
+                    "Config loaded successfully with {} subject rules",
+                    cfg.subject_rules.len()
+                );
+                Some(cfg)
+            }
+            Err(e) => {
+                error!("Failed to read config file: {}", e);
+                eprintln!("Error reading config file: {}", e);
+                process::exit(1);
+            }
+        }
+    } else {
+        debug!("No config file provided, using only built-in newsletter detection");
+        None
+    };
+
     // Print information about what the program will do
     info!("=== Email Newsletter Organizer ===");
     info!("IMAP Server: {}:{}", server, port);
     info!("Username: {}", username);
     info!("Source folder: {}", source_folder);
     info!("Target folder: {}", target_folder);
+    if let Some(cfg) = &config {
+        info!(
+            "Using {} subject regex rules from config file",
+            cfg.subject_rules.len()
+        );
+        if !cfg.sender_rules.is_empty() {
+            info!(
+                "Using {} sender regex rules from config file",
+                cfg.sender_rules.len()
+            );
+        }
+    }
+
     println!("=== Email Newsletter Organizer ===");
     println!("IMAP Server: {}:{}", server, port);
     println!("Username: {}", username);
     println!("Source folder: {}", source_folder);
     println!("Target folder: {}", target_folder);
+    if let Some(cfg) = &config {
+        println!(
+            "Using {} subject regex rules from config file",
+            cfg.subject_rules.len()
+        );
+        if !cfg.sender_rules.is_empty() {
+            println!(
+                "Using {} sender regex rules from config file",
+                cfg.sender_rules.len()
+            );
+        }
+
+        println!("\nConfigured subject patterns:");
+        for (i, rule) in cfg.subject_rules.iter().enumerate() {
+            if let Some(desc) = &rule.description {
+                println!("  {}. {} - {}", i + 1, rule.pattern, desc);
+            } else {
+                println!("  {}. {}", i + 1, rule.pattern);
+            }
+        }
+
+        if !cfg.sender_rules.is_empty() {
+            println!("\nConfigured sender patterns:");
+            for (i, rule) in cfg.sender_rules.iter().enumerate() {
+                if let Some(desc) = &rule.description {
+                    println!("  {}. {} - {}", i + 1, rule.pattern, desc);
+                } else {
+                    println!("  {}. {}", i + 1, rule.pattern);
+                }
+            }
+        }
+    }
 
     // Connect and get folder information
     info!("Connecting to server to retrieve folder list");
@@ -157,6 +255,7 @@ fn main() {
         &password,
         source_folder,
         target_folder,
+        config.as_ref(),
     ) {
         Ok(moved_count) => {
             if moved_count > 0 {
@@ -179,6 +278,15 @@ fn main() {
             process::exit(1);
         }
     }
+}
+
+fn read_config(path: &str) -> Result<Config, Box<dyn std::error::Error>> {
+    let mut file = File::open(path)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+
+    let config: Config = toml::from_str(&contents)?;
+    Ok(config)
 }
 
 fn get_folders(
@@ -208,6 +316,9 @@ fn get_folders(
         }
     };
 
+    // Skip retrieving capabilities to avoid recursion limit issues
+    debug!("Skipping server capabilities retrieval");
+
     // Get all folders
     debug!("Requesting folder list");
     let folders = session.list(None, Some("*"))?;
@@ -234,6 +345,7 @@ fn connect_and_process(
     password: &str,
     source_folder: &str,
     target_folder: &str,
+    config: Option<&Config>,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     // Setup TLS
     let tls = native_tls::TlsConnector::builder().build()?;
@@ -266,16 +378,16 @@ fn connect_and_process(
     session.select(source_folder)?;
 
     // Search for all messages
-    let messages = session.fetch("1:*", "(UID ENVELOPE BODY.PEEK[HEADER.FIELDS (TO FROM SUBJECT LIST-ID LIST-UNSUBSCRIBE X-MAILCHIMP-ID X-CAMPAIGN X-MAILER)])")?;
-
+    let messages = session.fetch("1:*", "(UID ENVELOPE BODY.PEEK[HEADER.FIELDS (LIST-ID LIST-UNSUBSCRIBE X-MAILCHIMP-ID X-CAMPAIGN X-MAILER)])")?;
     let mut newsletter_ids: Vec<String> = Vec::new();
 
     // First pass: identify newsletters
-    println!("\nScanning messages for newsletters...");
+    println!("\nScanning messages for newsletters and pattern matches...");
     let total_messages = messages.iter().count();
     let bar_width = 50;
 
     let mut newsletter_ids = Vec::new();
+    let mut match_reasons = Vec::new();
 
     for (i, message) in messages.iter().enumerate() {
         // Update progress bar
@@ -287,23 +399,126 @@ fn connect_and_process(
             total_messages
         );
         io::stdout().flush()?;
-        trace!("Checking message: {}", message.uid.unwrap_or(0));
 
         let uid = message.uid.unwrap_or(0);
         if uid == 0 {
+            warn!("Message has UUID 0");
             continue;
         }
 
+        let mut matched = false;
+        let mut reason = String::new();
+
         // Check headers for newsletter indicators
-        if let Some(headers) = message.header() {
-            let header_str = std::str::from_utf8(headers)?;
-            {
-                if is_newsletter(header_str) {
-                    newsletter_ids.push(uid.to_string());
+        if let Some(body) = message.body().or_else(|| message.text()) {
+            let headers = std::str::from_utf8(body)?;
+
+            if is_newsletter(headers) {
+                matched = true;
+                reason = "Newsletter headers".to_string();
+            }
+        }
+
+        // Check subject against regex patterns if config is provided
+        if !matched && config.is_some() {
+            if let Some(envelope) = message.envelope() {
+                if let Some(subject_bytes) = envelope.subject {
+                    // Try to convert subject to string, handling encoding issues gracefully
+                    let subject_str = match std::str::from_utf8(&subject_bytes) {
+                        Ok(s) => s.to_string(),
+                        Err(_) => String::from_utf8_lossy(&subject_bytes).to_string(),
+                    };
+
+                    // Check subject against patterns
+                    debug!("Checking subject patterns");
+                    if let Some(pattern_match) =
+                        check_subject_patterns(&subject_str, &config.unwrap().subject_rules)
+                    {
+                        matched = true;
+                        reason = format!("Subject pattern: {}", pattern_match);
+                    }
+                } else {
+                    debug!("NO MESSAGE ENVELOPE")
                 }
             }
-        } else {
-            error!("Error fetching message body");
+        }
+
+        // Check sender against regex patterns if config is provided and not already matched
+        if !matched && config.is_some() && !config.unwrap().sender_rules.is_empty() {
+            if let Some(envelope) = message.envelope() {
+                if let Some(from_addresses) = &envelope.from {
+                    for address in from_addresses {
+                        // Build sender string from address components
+                        let mut sender = String::new();
+
+                        // Add name if available
+                        if let Some(name_bytes) = &address.name {
+                            match std::str::from_utf8(name_bytes) {
+                                Ok(name) => {
+                                    sender.push_str(name);
+                                    sender.push_str(" ");
+                                }
+                                Err(_) => {
+                                    let name = String::from_utf8_lossy(name_bytes);
+                                    sender.push_str(&name);
+                                    sender.push_str(" ");
+                                }
+                            }
+                        }
+
+                        // Add email address
+                        sender.push_str("<");
+
+                        // Add mailbox (username) part
+                        if let Some(mailbox_bytes) = &address.mailbox {
+                            match std::str::from_utf8(mailbox_bytes) {
+                                Ok(mailbox) => {
+                                    sender.push_str(mailbox);
+                                }
+                                Err(_) => {
+                                    let mailbox = String::from_utf8_lossy(mailbox_bytes);
+                                    sender.push_str(&mailbox);
+                                }
+                            }
+                        }
+
+                        // Add @ symbol if we have both mailbox and host
+                        if address.mailbox.is_some() && address.host.is_some() {
+                            sender.push_str("@");
+                        }
+
+                        // Add host (domain) part
+                        if let Some(host_bytes) = &address.host {
+                            match std::str::from_utf8(host_bytes) {
+                                Ok(host) => {
+                                    sender.push_str(host);
+                                }
+                                Err(_) => {
+                                    let host = String::from_utf8_lossy(host_bytes);
+                                    sender.push_str(&host);
+                                }
+                            }
+                        }
+
+                        sender.push_str(">");
+
+                        // Check if this sender matches any patterns
+                        if let Some(pattern_match) =
+                            check_sender_patterns(&sender, &config.unwrap().sender_rules)
+                        {
+                            matched = true;
+                            reason = format!("Sender pattern: {}", pattern_match);
+                            break; // No need to check other addresses
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add to ids list if matched
+        if matched {
+            newsletter_ids.push(uid.to_string());
+            match_reasons.push((uid.to_string(), reason));
         }
     }
 
@@ -386,17 +601,18 @@ fn is_newsletter(headers: &str) -> bool {
     if headers.contains("List-ID:") {
         trace!("Found List-ID header");
         return true;
-    } else if headers.contains("List-Unsubscribe:") {
+    }
+    if headers.contains("List-Unsubscribe:") {
         trace!("Found List-Unsubscribe header");
         return true;
-    } else if headers.contains("X-Mailchimp-ID:") {
+    }
+    if headers.contains("X-Mailchimp-ID:") {
         trace!("Found X-Mailchimp-ID header");
         return true;
-    } else if headers.contains("X-Campaign") {
+    }
+    if headers.contains("X-Campaign") {
         trace!("Found X-Campaign header");
         return true;
-    } else {
-        trace!("Didn't find matching headers")
     }
 
     // Check for common newsletter senders
@@ -419,4 +635,50 @@ fn is_newsletter(headers: &str) -> bool {
 
     trace!("No newsletter indicators found");
     false
+}
+
+fn check_subject_patterns(subject: &str, rules: &[SubjectRule]) -> Option<String> {
+    for rule in rules {
+        match Regex::new(&rule.pattern) {
+            Ok(re) => {
+                if re.is_match(subject) {
+                    let pattern_desc = if let Some(desc) = &rule.description {
+                        format!("{} ({})", rule.pattern, desc)
+                    } else {
+                        rule.pattern.clone()
+                    };
+
+                    trace!("Subject matched pattern: {}", pattern_desc);
+                    return Some(pattern_desc);
+                }
+            }
+            Err(e) => {
+                warn!("Invalid regex pattern '{}': {}", rule.pattern, e);
+            }
+        }
+    }
+    None
+}
+
+fn check_sender_patterns(sender: &str, rules: &[SenderRule]) -> Option<String> {
+    for rule in rules {
+        match Regex::new(&rule.pattern) {
+            Ok(re) => {
+                if re.is_match(sender) {
+                    let pattern_desc = if let Some(desc) = &rule.description {
+                        format!("{} ({})", rule.pattern, desc)
+                    } else {
+                        rule.pattern.clone()
+                    };
+
+                    trace!("Sender matched pattern: {}", pattern_desc);
+                    return Some(pattern_desc);
+                }
+            }
+            Err(e) => {
+                warn!("Invalid regex pattern '{}': {}", rule.pattern, e);
+            }
+        }
+    }
+    None
 }
