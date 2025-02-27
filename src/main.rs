@@ -16,6 +16,7 @@ use clap::{App, Arg};
 use imap::Session;
 use native_tls::TlsStream;
 use regex::Regex;
+use std::collections::HashMap;
 use std::env;
 use std::net::TcpStream;
 use std::process;
@@ -31,12 +32,14 @@ struct Config {
 struct SubjectRule {
     pattern: String,
     description: Option<String>,
+    folder: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct SenderRule {
     pattern: String,
     description: Option<String>,
+    folder: Option<String>,
 }
 
 fn main() {
@@ -86,7 +89,7 @@ fn main() {
             Arg::with_name("target_folder")
                 .long("target")
                 .value_name("TARGET_FOLDER")
-                .help("Target folder for newsletters")
+                .help("Default target folder for newsletters")
                 .required(true),
         )
         .arg(
@@ -154,7 +157,7 @@ fn main() {
     info!("IMAP Server: {}:{}", server, port);
     info!("Username: {}", username);
     info!("Source folder: {}", source_folder);
-    info!("Target folder: {}", target_folder);
+    info!("Default target folder: {}", target_folder);
     if let Some(cfg) = &config {
         info!(
             "Using {} subject regex rules from config file",
@@ -172,7 +175,7 @@ fn main() {
     println!("IMAP Server: {}:{}", server, port);
     println!("Username: {}", username);
     println!("Source folder: {}", source_folder);
-    println!("Target folder: {}", target_folder);
+    println!("Default target folder: {}", target_folder);
     if let Some(cfg) = &config {
         println!(
             "Using {} subject regex rules from config file",
@@ -187,20 +190,32 @@ fn main() {
 
         println!("\nConfigured subject patterns:");
         for (i, rule) in cfg.subject_rules.iter().enumerate() {
-            if let Some(desc) = &rule.description {
-                println!("  {}. {} - {}", i + 1, rule.pattern, desc);
+            let folder_info = if let Some(folder) = &rule.folder {
+                format!(" -> {}", folder)
             } else {
-                println!("  {}. {}", i + 1, rule.pattern);
+                "".to_string()
+            };
+
+            if let Some(desc) = &rule.description {
+                println!("  {}. {} - {}{}", i + 1, rule.pattern, desc, folder_info);
+            } else {
+                println!("  {}. {}{}", i + 1, rule.pattern, folder_info);
             }
         }
 
         if !cfg.sender_rules.is_empty() {
             println!("\nConfigured sender patterns:");
             for (i, rule) in cfg.sender_rules.iter().enumerate() {
-                if let Some(desc) = &rule.description {
-                    println!("  {}. {} - {}", i + 1, rule.pattern, desc);
+                let folder_info = if let Some(folder) = &rule.folder {
+                    format!(" -> {}", folder)
                 } else {
-                    println!("  {}. {}", i + 1, rule.pattern);
+                    "".to_string()
+                };
+
+                if let Some(desc) = &rule.description {
+                    println!("  {}. {} - {}{}", i + 1, rule.pattern, desc, folder_info);
+                } else {
+                    println!("  {}. {}{}", i + 1, rule.pattern, folder_info);
                 }
             }
         }
@@ -227,11 +242,35 @@ fn main() {
         println!("  {}. {}", i + 1, folder);
     }
 
+    // Collect all unique target folders
+    let mut unique_folders = vec![target_folder.to_string()];
+    if let Some(cfg) = &config {
+        for rule in &cfg.subject_rules {
+            if let Some(folder) = &rule.folder {
+                if !unique_folders.contains(&folder.to_string()) {
+                    unique_folders.push(folder.to_string());
+                }
+            }
+        }
+        for rule in &cfg.sender_rules {
+            if let Some(folder) = &rule.folder {
+                if !unique_folders.contains(&folder.to_string()) {
+                    unique_folders.push(folder.to_string());
+                }
+            }
+        }
+    }
+
     // Ask for confirmation
     info!("Asking for user confirmation");
+    println!("\nTarget folders that will be used:");
+    for folder in &unique_folders {
+        println!("  - {}", folder);
+    }
+
     print!(
-        "\nDo you want to proceed with moving newsletters from '{}' to '{}'? (y/n): ",
-        source_folder, target_folder
+        "\nDo you want to proceed with organizing emails from '{}'? (y/n): ",
+        source_folder
     );
     io::stdout().flush().unwrap();
 
@@ -257,19 +296,21 @@ fn main() {
         target_folder,
         config.as_ref(),
     ) {
-        Ok(moved_count) => {
-            if moved_count > 0 {
-                info!(
-                    "Successfully moved {} newsletter messages to {}",
-                    moved_count, target_folder
-                );
-                println!(
-                    "Successfully moved {} newsletter messages to {}",
-                    moved_count, target_folder
-                );
+        Ok(moved_counts) => {
+            let total_moved: usize = moved_counts.values().sum();
+
+            if total_moved > 0 {
+                info!("Successfully moved {} messages", total_moved);
+                println!("\nSuccessfully moved {} messages:", total_moved);
+
+                for (folder, count) in &moved_counts {
+                    if *count > 0 {
+                        println!("  - {} to '{}'", count, folder);
+                    }
+                }
             } else {
-                info!("No newsletter messages found to move");
-                println!("No newsletter messages found to move");
+                info!("No messages found to move");
+                println!("No messages found to move");
             }
         }
         Err(e) => {
@@ -338,15 +379,22 @@ fn get_folders(
     Ok(folder_names)
 }
 
+#[derive(Debug)]
+struct MatchInfo {
+    uid: String,
+    reason: String,
+    target_folder: String,
+}
+
 fn connect_and_process(
     server: &str,
     port: u16,
     username: &str,
     password: &str,
     source_folder: &str,
-    target_folder: &str,
+    default_target_folder: &str,
     config: Option<&Config>,
-) -> Result<usize, Box<dyn std::error::Error>> {
+) -> Result<HashMap<String, usize>, Box<dyn std::error::Error>> {
     // Setup TLS
     let tls = native_tls::TlsConnector::builder().build()?;
 
@@ -359,19 +407,36 @@ fn connect_and_process(
         Err((err, _client)) => return Err(Box::new(err)),
     };
 
-    // Ensure target folder exists
+    // Get all available folders
     let folders = session.list(None, Some("*"))?;
-    let mut target_exists = false;
-    for folder in &folders {
-        if folder.name() == target_folder {
-            target_exists = true;
-            break;
+    let available_folders: Vec<String> = folders.iter().map(|f| f.name().to_string()).collect();
+
+    // Collect all potentially needed target folders
+    let mut needed_folders = vec![default_target_folder.to_string()];
+    if let Some(cfg) = config {
+        for rule in &cfg.subject_rules {
+            if let Some(folder) = &rule.folder {
+                if !needed_folders.contains(folder) {
+                    needed_folders.push(folder.to_string());
+                }
+            }
+        }
+        for rule in &cfg.sender_rules {
+            if let Some(folder) = &rule.folder {
+                if !needed_folders.contains(folder) {
+                    needed_folders.push(folder.to_string());
+                }
+            }
         }
     }
 
-    if !target_exists {
-        session.create(target_folder)?;
-        println!("Created folder: {}", target_folder);
+    // Create any missing folders
+    for folder in &needed_folders {
+        if !available_folders.contains(folder) {
+            info!("Creating folder: {}", folder);
+            session.create(folder)?;
+            println!("Created folder: {}", folder);
+        }
     }
 
     // Select the source mailbox
@@ -379,15 +444,13 @@ fn connect_and_process(
 
     // Search for all messages
     let messages = session.fetch("1:*", "(UID ENVELOPE BODY.PEEK[HEADER.FIELDS (LIST-ID LIST-UNSUBSCRIBE X-MAILCHIMP-ID X-CAMPAIGN X-MAILER)])")?;
-    let mut newsletter_ids: Vec<String> = Vec::new();
 
     // First pass: identify newsletters
     println!("\nScanning messages for newsletters and pattern matches...");
     let total_messages = messages.iter().count();
     let bar_width = 50;
 
-    let mut newsletter_ids = Vec::new();
-    let mut match_reasons = Vec::new();
+    let mut matched_messages = Vec::new();
 
     for (i, message) in messages.iter().enumerate() {
         // Update progress bar
@@ -408,6 +471,7 @@ fn connect_and_process(
 
         let mut matched = false;
         let mut reason = String::new();
+        let mut target_folder = default_target_folder.to_string();
 
         // Check headers for newsletter indicators
         if let Some(body) = message.body().or_else(|| message.text()) {
@@ -431,14 +495,17 @@ fn connect_and_process(
 
                     // Check subject against patterns
                     debug!("Checking subject patterns");
-                    if let Some(pattern_match) =
+                    if let Some((pattern_match, folder)) =
                         check_subject_patterns(&subject_str, &config.unwrap().subject_rules)
                     {
                         matched = true;
                         reason = format!("Subject pattern: {}", pattern_match);
+
+                        // Use rule-specific folder if provided
+                        if let Some(rule_folder) = folder {
+                            target_folder = rule_folder.to_string();
+                        }
                     }
-                } else {
-                    debug!("NO MESSAGE ENVELOPE")
                 }
             }
         }
@@ -503,11 +570,17 @@ fn connect_and_process(
                         sender.push_str(">");
 
                         // Check if this sender matches any patterns
-                        if let Some(pattern_match) =
+                        if let Some((pattern_match, folder)) =
                             check_sender_patterns(&sender, &config.unwrap().sender_rules)
                         {
                             matched = true;
                             reason = format!("Sender pattern: {}", pattern_match);
+
+                            // Use rule-specific folder if provided
+                            if let Some(rule_folder) = folder {
+                                target_folder = rule_folder.to_string();
+                            }
+
                             break; // No need to check other addresses
                         }
                     }
@@ -515,10 +588,13 @@ fn connect_and_process(
             }
         }
 
-        // Add to ids list if matched
+        // Add to matched list if matched
         if matched {
-            newsletter_ids.push(uid.to_string());
-            match_reasons.push((uid.to_string(), reason));
+            matched_messages.push(MatchInfo {
+                uid: uid.to_string(),
+                reason,
+                target_folder,
+            });
         }
     }
 
@@ -530,68 +606,90 @@ fn connect_and_process(
         total_messages
     );
 
-    let moved_count = newsletter_ids.len();
+    // Group messages by target folder
+    let mut messages_by_folder: HashMap<String, Vec<String>> = HashMap::new();
+    for matched in &matched_messages {
+        messages_by_folder
+            .entry(matched.target_folder.clone())
+            .or_insert_with(Vec::new)
+            .push(matched.uid.clone());
+    }
 
-    // Move identified newsletters if any were found
-    if !newsletter_ids.is_empty() {
+    let total_matched = matched_messages.len();
+
+    // Move messages by folder
+    let mut moved_counts: HashMap<String, usize> = HashMap::new();
+    let mut failed_count = 0;
+
+    if !matched_messages.is_empty() {
         println!(
-            "\nMoving {} newsletters to '{}'...",
-            moved_count, target_folder
+            "\nMoving {} messages to their target folders...",
+            total_matched
         );
 
-        // Move messages in batches to show progress
-        let batch_size = 10.max(moved_count / 20).min(moved_count); // At least 10, at most all, aim for ~20 batches
-        let mut moved = 0;
-        let mut failed_ids: Vec<String> = Vec::new();
+        for (target_folder, uids) in &messages_by_folder {
+            let folder_count = uids.len();
+            println!("Moving {} messages to '{}'...", folder_count, target_folder);
 
-        while moved < moved_count {
-            let end = (moved + batch_size).min(moved_count);
-            let batch = &newsletter_ids[moved..end];
-            let uid_batch = batch.join(",");
+            // Set initial moved count for this folder
+            moved_counts.insert(target_folder.clone(), 0);
 
-            match session.uid_mv(&uid_batch, target_folder) {
-                Ok(_) => {
-                    moved += batch.len();
-                }
-                Err(e) => {
-                    eprintln!("\nError moving messages {}: {}", uid_batch, e);
-                    // Try moving individual messages to identify which ones are problematic
-                    for uid in batch {
-                        match session.mv(uid, target_folder) {
-                            Ok(_) => {
-                                moved += 1;
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to move message with UID {}: {}", uid, e);
-                                failed_ids.push(uid.clone());
+            // Move messages in batches to show progress
+            let batch_size = 10.max(folder_count / 20).min(folder_count); // At least 10, at most all, aim for ~20 batches
+            let mut moved = 0;
+
+            while moved < folder_count {
+                let end = (moved + batch_size).min(folder_count);
+                let batch = &uids[moved..end];
+                let uid_batch = batch.join(",");
+
+                match session.uid_mv(&uid_batch, target_folder) {
+                    Ok(_) => {
+                        moved += batch.len();
+                        *moved_counts.get_mut(target_folder).unwrap() += batch.len();
+                    }
+                    Err(e) => {
+                        eprintln!("\nError moving messages {}: {}", uid_batch, e);
+                        // Try moving individual messages to identify which ones are problematic
+                        for uid in batch {
+                            match session.uid_mv(uid, target_folder) {
+                                Ok(_) => {
+                                    moved += 1;
+                                    *moved_counts.get_mut(target_folder).unwrap() += 1;
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to move message with UID {}: {}", uid, e);
+                                    failed_count += 1;
+                                }
                             }
                         }
                     }
                 }
+
+                // Update progress bar
+                let progress = (moved as f32 / folder_count as f32 * bar_width as f32) as usize;
+                print!(
+                    "\r[{:<50}] {}/{}",
+                    "#".repeat(progress),
+                    moved,
+                    folder_count
+                );
+                io::stdout().flush()?;
             }
 
-            // Update progress bar
-            let progress = (moved as f32 / moved_count as f32 * bar_width as f32) as usize;
-            print!("\r[{:<50}] {}/{}", "#".repeat(progress), moved, moved_count);
-            io::stdout().flush()?;
+            println!(); // Final newline after progress bar
         }
 
         // Report failures if any
-        if !failed_ids.is_empty() {
-            eprintln!(
-                "\nWarning: Failed to move {} messages: {}",
-                failed_ids.len(),
-                failed_ids.join(", ")
-            );
+        if failed_count > 0 {
+            eprintln!("\nWarning: Failed to move {} messages", failed_count);
         }
-
-        println!(); // Final newline after progress bar
     }
 
     // Logout
     session.logout()?;
 
-    Ok(moved_count)
+    Ok(moved_counts)
 }
 
 fn is_newsletter(headers: &str) -> bool {
@@ -637,7 +735,10 @@ fn is_newsletter(headers: &str) -> bool {
     false
 }
 
-fn check_subject_patterns(subject: &str, rules: &[SubjectRule]) -> Option<String> {
+fn check_subject_patterns(
+    subject: &str,
+    rules: &[SubjectRule],
+) -> Option<(String, Option<String>)> {
     for rule in rules {
         match Regex::new(&rule.pattern) {
             Ok(re) => {
@@ -649,7 +750,7 @@ fn check_subject_patterns(subject: &str, rules: &[SubjectRule]) -> Option<String
                     };
 
                     trace!("Subject matched pattern: {}", pattern_desc);
-                    return Some(pattern_desc);
+                    return Some((pattern_desc, rule.folder.clone()));
                 }
             }
             Err(e) => {
@@ -660,7 +761,7 @@ fn check_subject_patterns(subject: &str, rules: &[SubjectRule]) -> Option<String
     None
 }
 
-fn check_sender_patterns(sender: &str, rules: &[SenderRule]) -> Option<String> {
+fn check_sender_patterns(sender: &str, rules: &[SenderRule]) -> Option<(String, Option<String>)> {
     for rule in rules {
         match Regex::new(&rule.pattern) {
             Ok(re) => {
@@ -672,7 +773,7 @@ fn check_sender_patterns(sender: &str, rules: &[SenderRule]) -> Option<String> {
                     };
 
                     trace!("Sender matched pattern: {}", pattern_desc);
-                    return Some(pattern_desc);
+                    return Some((pattern_desc, rule.folder.clone()));
                 }
             }
             Err(e) => {
@@ -681,4 +782,417 @@ fn check_sender_patterns(sender: &str, rules: &[SenderRule]) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // Helper function to create a temporary config file with specific content
+    fn create_temp_config(content: &str) -> (NamedTempFile, String) {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        let path = file.path().to_str().unwrap().to_string();
+        (file, path)
+    }
+
+    #[test]
+    fn test_read_config() {
+        let config_content = r#"
+            [[subject_rules]]
+            pattern = "Newsletter"
+            description = "Test newsletter"
+            folder = "TestFolder"
+
+            [[subject_rules]]
+            pattern = "Update"
+            description = "Test update"
+
+            [[sender_rules]]
+            pattern = "test@example.com"
+            description = "Test sender"
+            folder = "SenderFolder"
+        "#;
+
+        let (_file, path) = create_temp_config(config_content);
+
+        let config = read_config(&path).unwrap();
+
+        assert_eq!(config.subject_rules.len(), 2);
+        assert_eq!(config.sender_rules.len(), 1);
+
+        // Test first subject rule
+        assert_eq!(config.subject_rules[0].pattern, "Newsletter");
+        assert_eq!(
+            config.subject_rules[0].description,
+            Some("Test newsletter".to_string())
+        );
+        assert_eq!(
+            config.subject_rules[0].folder,
+            Some("TestFolder".to_string())
+        );
+
+        // Test second subject rule (no folder)
+        assert_eq!(config.subject_rules[1].pattern, "Update");
+        assert_eq!(
+            config.subject_rules[1].description,
+            Some("Test update".to_string())
+        );
+        assert_eq!(config.subject_rules[1].folder, None);
+
+        // Test sender rule
+        assert_eq!(config.sender_rules[0].pattern, "test@example.com");
+        assert_eq!(
+            config.sender_rules[0].description,
+            Some("Test sender".to_string())
+        );
+        assert_eq!(
+            config.sender_rules[0].folder,
+            Some("SenderFolder".to_string())
+        );
+    }
+
+    #[test]
+    fn test_is_newsletter() {
+        // Test positive cases
+        assert!(is_newsletter("List-ID: <abcdef.list-id.example.com>"));
+        assert!(is_newsletter(
+            "List-Unsubscribe: <https://example.com/unsubscribe>"
+        ));
+        assert!(is_newsletter("X-Mailchimp-ID: abc123"));
+        assert!(is_newsletter("X-Campaign: newsletter"));
+        assert!(is_newsletter("From: Company Newsletter <news@example.com>"));
+        assert!(is_newsletter("Subject: Your Weekly Digest"));
+
+        // Test negative cases
+        assert!(!is_newsletter("From: John Doe <john@example.com>"));
+        assert!(!is_newsletter("Subject: Hello friend"));
+        assert!(!is_newsletter("Content-Type: text/plain"));
+    }
+
+    #[test]
+    fn test_check_subject_patterns() {
+        let rules = vec![
+            SubjectRule {
+                pattern: r"(?i)newsletter".to_string(),
+                description: Some("Company newsletters".to_string()),
+                folder: Some("Newsletters".to_string()),
+            },
+            SubjectRule {
+                pattern: r"(?i)invoice|receipt".to_string(),
+                description: Some("Financial emails".to_string()),
+                folder: Some("Financial".to_string()),
+            },
+            SubjectRule {
+                pattern: r"(?i)update".to_string(),
+                description: Some("Updates".to_string()),
+                folder: None,
+            },
+        ];
+
+        // Test matching with folder
+        let result = check_subject_patterns("Your Weekly Newsletter", &rules);
+        assert!(result.is_some());
+        let (pattern, folder) = result.unwrap();
+        assert!(pattern.contains("newsletter"));
+        assert_eq!(folder, Some("Newsletters".to_string()));
+
+        // Test matching with different folder
+        let result = check_subject_patterns("Invoice #12345", &rules);
+        assert!(result.is_some());
+        let (pattern, folder) = result.unwrap();
+        assert!(pattern.contains("invoice"));
+        assert_eq!(folder, Some("Financial".to_string()));
+
+        // Test matching without folder
+        let result = check_subject_patterns("Security Update", &rules);
+        assert!(result.is_some());
+        let (pattern, folder) = result.unwrap();
+        assert!(pattern.contains("update"));
+        assert_eq!(folder, None);
+
+        // Test no match
+        let result = check_subject_patterns("Hello World", &rules);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_check_sender_patterns() {
+        let rules = vec![
+            SenderRule {
+                pattern: r"noreply@example\.com".to_string(),
+                description: Some("Example notifications".to_string()),
+                folder: Some("Notifications".to_string()),
+            },
+            SenderRule {
+                pattern: r".*@newsletter\.com".to_string(),
+                description: Some("Newsletter service".to_string()),
+                folder: Some("Newsletters".to_string()),
+            },
+            SenderRule {
+                pattern: r"support@.*\.com".to_string(),
+                description: Some("Support emails".to_string()),
+                folder: None,
+            },
+        ];
+
+        // Test matching with folder
+        let result = check_sender_patterns("Company <noreply@example.com>", &rules);
+        assert!(result.is_some());
+        let (pattern, folder) = result.unwrap();
+        assert!(pattern.contains("noreply@example"));
+        assert_eq!(folder, Some("Notifications".to_string()));
+
+        // Test matching with different folder
+        let result = check_sender_patterns("News <news@newsletter.com>", &rules);
+        assert!(result.is_some());
+        let (pattern, folder) = result.unwrap();
+        assert!(pattern.contains("@newsletter"));
+        assert_eq!(folder, Some("Newsletters".to_string()));
+
+        // Test matching without folder
+        let result = check_sender_patterns("Support <support@company.com>", &rules);
+        assert!(result.is_some());
+        let (pattern, folder) = result.unwrap();
+        assert!(pattern.contains("support@"));
+        assert_eq!(folder, None);
+
+        // Test no match
+        let result = check_sender_patterns("John Doe <john@personal.net>", &rules);
+        assert!(result.is_none());
+    }
+
+    // Mock IMAP session for testing
+    struct MockSession {
+        folders: Vec<String>,
+        emails: Vec<MockEmail>,
+        moved_emails: HashMap<String, Vec<String>>,
+    }
+
+    struct MockEmail {
+        uid: u32,
+        subject: String,
+        sender: String,
+        headers: String,
+    }
+
+    impl MockSession {
+        fn new() -> Self {
+            MockSession {
+                folders: vec!["INBOX".to_string(), "Archive".to_string()],
+                emails: Vec::new(),
+                moved_emails: HashMap::new(),
+            }
+        }
+
+        fn add_email(&mut self, uid: u32, subject: &str, sender: &str, is_newsletter: bool) {
+            let mut headers = format!("Subject: {}\nFrom: {}\n", subject, sender);
+            if is_newsletter {
+                headers.push_str("List-ID: <list.example.com>\n");
+            }
+
+            self.emails.push(MockEmail {
+                uid,
+                subject: subject.to_string(),
+                sender: sender.to_string(),
+                headers,
+            });
+        }
+
+        fn create_folder(&mut self, folder: &str) -> Result<(), String> {
+            if !self.folders.contains(&folder.to_string()) {
+                self.folders.push(folder.to_string());
+            }
+            Ok(())
+        }
+
+        fn move_email(&mut self, uid: &str, target_folder: &str) -> Result<(), String> {
+            // Verify UID exists
+            let uid_num: u32 = uid.parse().map_err(|_| "Invalid UID".to_string())?;
+            if !self.emails.iter().any(|e| e.uid == uid_num) {
+                return Err(format!("Email with UID {} not found", uid));
+            }
+
+            // Verify folder exists
+            if !self.folders.contains(&target_folder.to_string()) {
+                return Err(format!("Folder {} does not exist", target_folder));
+            }
+
+            // Record the move operation
+            self.moved_emails
+                .entry(target_folder.to_string())
+                .or_insert_with(Vec::new)
+                .push(uid.to_string());
+
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_email_processing_logic() {
+        // Create mock session
+        let mut session = MockSession::new();
+        
+        // Add test emails
+        session.add_email(1, "Regular email", "person@example.com", false);
+        session.add_email(2, "Weekly Newsletter", "news@company.com", true);
+        session.add_email(3, "Your Invoice #123", "billing@example.com", false);
+        session.add_email(4, "Product Update", "updates@example.com", true);
+        
+        // Create folders
+        session.create_folder("Newsletters").unwrap();
+        session.create_folder("Financial").unwrap();
+        
+        // Define rules
+        let config = Config {
+            subject_rules: vec![
+                SubjectRule {
+                    pattern: r"(?i)newsletter".to_string(),
+                    description: Some("Newsletters".to_string()),
+                    folder: Some("Newsletters".to_string()),
+                },
+                SubjectRule {
+                    pattern: r"(?i)invoice".to_string(),
+                    description: Some("Invoices".to_string()),
+                    folder: Some("Financial".to_string()),
+                },
+                SubjectRule {
+                    pattern: r"(?i)update".to_string(),
+                    description: None,
+                    folder: None,
+                },
+            ],
+            sender_rules: vec![],
+        };
+        
+        // Process each email manually to simulate the core logic
+        let default_target = "Archive";
+        let mut moved_counts: HashMap<String, usize> = HashMap::new();
+        
+        // First, collect the emails we need to process and their target folders
+        let moves_to_perform: Vec<(u32, String)> = session.emails.iter()
+            .filter_map(|email| {
+                let mut matched = false;
+                let mut target_folder = default_target.to_string();
+                
+                // Check if it's a newsletter based on headers
+                if is_newsletter(&email.headers) {
+                    matched = true;
+                }
+                
+                // Check subject patterns
+                if !matched {
+                    if let Some((_, folder)) = check_subject_patterns(&email.subject, &config.subject_rules) {
+                        matched = true;
+                        if let Some(rule_folder) = folder {
+                            target_folder = rule_folder;
+                        }
+                    }
+                }
+                
+                if matched {
+                    Some((email.uid, target_folder))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        // Now process the moves separately from the iteration
+        for (uid, target_folder) in moves_to_perform {
+            let uid_str = uid.to_string();
+            session.move_email(&uid_str, &target_folder).unwrap();
+            *moved_counts.entry(target_folder).or_insert(0) += 1;
+        }
+        
+        // Verify results
+        assert_eq!(moved_counts.get("Newsletters").unwrap_or(&0), &1);
+        assert_eq!(moved_counts.get("Financial").unwrap_or(&0), &1);
+        assert_eq!(moved_counts.get("Archive").unwrap_or(&0), &1); // The Update email
+        
+        // Verify correct emails were moved to each folder
+        assert!(session.moved_emails.get("Newsletters").unwrap().contains(&"2".to_string()));
+        assert!(session.moved_emails.get("Financial").unwrap().contains(&"3".to_string()));
+        assert!(session.moved_emails.get("Archive").unwrap().contains(&"4".to_string()));
+        
+        // Verify that regular email was not moved
+        let all_moved: Vec<String> = session.moved_emails.values()
+            .flat_map(|v| v.clone())
+            .collect();
+        assert!(!all_moved.contains(&"1".to_string()));
+    }
+
+    #[test]
+    fn test_nested_folders() {
+        let config_content = r#"
+            [[subject_rules]]
+            pattern = "Newsletter"
+            description = "Test newsletter"
+            folder = "Newsletters.Company"
+
+            [[sender_rules]]
+            pattern = "test@example.com"
+            description = "Test sender"
+            folder = "Senders/Company"
+        "#;
+
+        let (_file, path) = create_temp_config(config_content);
+
+        let config = read_config(&path).unwrap();
+
+        // Test nested folder with dot notation
+        assert_eq!(
+            config.subject_rules[0].folder,
+            Some("Newsletters.Company".to_string())
+        );
+
+        // Test nested folder with slash notation
+        assert_eq!(
+            config.sender_rules[0].folder,
+            Some("Senders/Company".to_string())
+        );
+    }
+
+    #[test]
+    fn test_invalid_regex_patterns() {
+        // Create rules with one invalid pattern
+        let subject_rules = vec![
+            SubjectRule {
+                pattern: r"[invalid regex".to_string(), // Invalid regex
+                description: None,
+                folder: None,
+            },
+            SubjectRule {
+                pattern: r"valid-pattern".to_string(), // Valid regex
+                description: None,
+                folder: None,
+            },
+        ];
+
+        // The function should skip the invalid pattern and continue
+        let result = check_subject_patterns("valid-pattern", &subject_rules);
+        assert!(result.is_some());
+        let (pattern, _) = result.unwrap();
+        assert_eq!(pattern, "valid-pattern");
+
+        // Test with all invalid patterns
+        let invalid_rules = vec![
+            SubjectRule {
+                pattern: r"[invalid regex".to_string(),
+                description: None,
+                folder: None,
+            },
+            SubjectRule {
+                pattern: r"(".to_string(),
+                description: None,
+                folder: None,
+            },
+        ];
+
+        // Should return None when no valid patterns match
+        let result = check_subject_patterns("test string", &invalid_rules);
+        assert!(result.is_none());
+    }
 }
