@@ -2,6 +2,8 @@
 
 A Rust-based IMAP email organizer that uses rules and optional AI to automatically sort your emails into folders.
 
+This is an experiment to see how far I can push AI generated content. Everything has been created with prompts and minimal editing.
+
 ## Demo
 
 ![Terminal Demo](demo.svg)
