@@ -259,15 +259,15 @@ impl AiFilter {
         let system_prompt = format!(
             "You are an email classification assistant. Your ONLY task is to assign emails to EXISTING folders. \
             ===AVAILABLE FOLDERS=== \
-            The ONLY valid folders you can use are listed below. Note that folders may be top level, or they may be nested under INBOX, please use the correct hierarchy. \
+            The ONLY valid folders you can use are listed below. You MUST use EXACT spelling, capitalization, and the EXACT path as shown. \
             {} \
             \
             ===DEFAULT FOLDER===
-            If you're unsure where to file an email, ALWAYS use this default folder:: {}. \
+            If you're unsure where to file an email, ALWAYS use this default folder: {}. \
             \
             INSTRUCTIONS: \
             1. Look at the email's subject, sender, headers and content \
-            2. Select ONE folder from the AVAILABLE FOLDERS list above - use EXACT spelling and capitalization. Note that folders may be top level, or they may be nested under INBOX. \
+            2. Select ONE folder from the AVAILABLE FOLDERS list above - use EXACT spelling, capitalization, and path as shown in the list \
             3. If uncertain, use the DEFAULT FOLDER \
             4. Provide a brief reason \
             \
@@ -293,7 +293,11 @@ impl AiFilter {
             - Does it look like it is an actual person, not an automated message? In that case, it should remain in INBOX \
             - Note: Specialized folders like 'TrueNAS - Alerts' are ONLY for alerts coming from TrueNAS, they MUST NOT be used for other emails. Folders under 'Lists' are for their respective mailing lists.\
             \
-            VERIFICATION: Before responding, check that your 'target_folder' EXACTLY matches one of the available folders listed above.\
+            CRITICAL: You MUST select a folder from the EXACT list provided. DO NOT modify folder names or paths in any way. \
+            DO NOT add, remove, or change any part of the folder name. Use the COMPLETE folder path exactly as shown. \
+            For example, if the list contains 'INBOX/Trades' but not 'Trades', you MUST use 'INBOX/Trades'.\
+            \
+            VERIFICATION: Before responding, verify that your 'target_folder' is an EXACT copy-paste of one of the available folders listed above.\
             ", 
             folders_list,
             default_target_folder
@@ -371,7 +375,11 @@ impl AiFilter {
                 match serde_json::from_str::<ModelResponse>(&choice.message.content) {
                     Ok(parsed) => {
                         // Verify the target folder is valid
-                        if self.available_folders.contains(&parsed.target_folder) {
+                        debug!("Validating suggested folder: '{}'", parsed.target_folder);
+                        let contains_folder = self.available_folders.contains(&parsed.target_folder);
+                        debug!("Folder validation result for '{}': {}", parsed.target_folder, contains_folder);
+                        
+                        if contains_folder {
                             return Ok(Some((parsed.target_folder, parsed.reason)));
                         } else {
                             invalid_folder_attempts += 1;
@@ -383,6 +391,15 @@ impl AiFilter {
                                 MAX_INVALID_FOLDER_RETRIES + 1,
                                 parsed.reason
                             );
+                            
+                            // Let's print a few folders that might be similar to help diagnose the issue
+                            for folder in &self.available_folders {
+                                if folder.contains(&parsed.target_folder) || 
+                                   parsed.target_folder.contains(folder) ||
+                                   folder.split('/').last() == parsed.target_folder.split('/').last() {
+                                    debug!("Possible similar folder: '{}'", folder);
+                                }
+                            }
 
                             if invalid_folder_attempts <= MAX_INVALID_FOLDER_RETRIES {
                                 debug!("Retrying with the same message...");
