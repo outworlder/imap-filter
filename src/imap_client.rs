@@ -5,7 +5,6 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use log::{debug, error, trace, warn};
 use native_tls::TlsStream;
 use std::collections::HashMap;
-use std::io::{self, Write};
 use std::net::TcpStream;
 
 // Define a struct to hold the necessary information for an IMAP client

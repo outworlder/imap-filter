@@ -1,0 +1,104 @@
+[[subject_rules]]
+pattern = "(?i)Price alert:"
+description = "Coinbase price alerts"
+folder = "INBOX/Notifications/Trades"
+
+[[sender_rules]]
+pattern = "(?i)^no[-_]?reply@.*"
+description = "Automated emails"
+folder = "INBOX/Notifications"
+
+[[sender_rules]]
+pattern = "(?i)email.nextdoor.com"
+description = "Nextdoor emails"
+folder = "INBOX/Promotions"
+
+[[sender_rules]]
+pattern = "(?i)notifications-noreply@linkedin.com"
+description = "Linkedin Emails"
+folder = "INBOX/Notifications"
+
+[[sender_rules]]
+pattern = "(?i)serasa@novidades.serasa.com.br"
+description = "serasa"
+folder = "INBOX/Promotions"
+
+[[sender_rules]]
+pattern = "(?i)support@e.usa.experian.com"
+description = "Experian"
+folder = "INBOX/Documents"
+
+[[sender_rules]]
+pattern = "(?i)bingo@patreon.com"
+description = "Maverick"
+folder = "INBOX/Documents/Payments"
+
+[[sender_rules]]
+pattern = "(?i)store-news@amazon.com"
+description = "Amazon"
+folder = "INBOX/Promotions"
+
+[[sender_rules]]
+pattern = "(?i)noreply@tradingview.com"
+description = "TradingView"
+folder = "INBOX/Notifications/Trades"
+
+[[sender_rules]]
+pattern = "(?i)hello@ohmconnect.com"
+description = "OhmConnect"
+folder = "INBOX/Documents/Bills"
+
+[[sender_rules]]
+pattern = "(?i)vbs@transactional.vanguard.com"
+description = "Vanguard transactions"
+folder = "INBOX/Notifications/Trades"
+
+[[sender_rules]]
+pattern = "(?i)email@washingtonpost.com"
+description = "The Washington Post"
+folder = "INBOX/News"
+
+[[sender_rules]]
+pattern = "(?i)auto-reply@usps.com"
+description = "USPS"
+folder = "INBOX/Notifications"
+
+[[sender_rules]]
+pattern = "(?i)DoNotReply@billpay.pge.com"
+description = "PG&E"
+folder = "INBOX/Documents/Bills"
+
+[[sender_rules]]
+pattern = "(?i)update@emailff.att-mail.com"
+description = "ATT"
+folder = "INBOX/Documents/Bills"
+
+[[sender_rules]]
+pattern = "(?i)no_reply@bayareafastrak.org"
+description = "Fasttrack"
+folder = "INBOX/Documents/Bills"
+
+[[sender_rules]]
+pattern = "(?i)noreply@paymentcenter.ebmud.com"
+description = "EBMUD"
+folder = "INBOX/Documents/Bills"
+
+[[sender_rules]]
+pattern = "(?i)no_reply@email.apple.com"
+description = "Apple"
+folder = "INBOX/Documents/Bills"
+
+[[sender_rules]]
+pattern = "(?i)purchase"
+description = "Random purchases"
+folder = "INBOX/Documents/Bills"
+
+[[sender_rules]]
+pattern = "(?i)@calottery.com"
+description = "California Lottery Promotions"
+folder = "INBOX/Promotions"
+
+[[subject_rules]]
+pattern = "(?i)\\b(Lottery|Jackpot|Winner|Promotion|Claim|Cash Prize)\\b"
+description = "Lottery-related subjects"
+folder = "INBOX/Promotions"

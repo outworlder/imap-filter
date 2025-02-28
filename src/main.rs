@@ -14,7 +14,7 @@ mod filter;
 mod imap_client;
 
 use clap::{App, Arg};
-use console::{style, Term};
+use console::style;
 use log::{debug, error, info};
 use std::collections::HashMap;
 use std::env;
@@ -23,7 +23,7 @@ use std::process;
 
 use config::Config;
 use email::EmailProcessor;
-use filter::{AiFilter, FilterEngine, RuleBasedFilter};
+use filter::{AiFilter, FilterEngine, RuleBasedFilter, HybridFilter};
 use imap_client::ImapClient;
 
 fn main() {
@@ -98,6 +98,27 @@ fn main() {
                 .takes_value(false),
         )
         .arg(
+            Arg::with_name("hybrid")
+                .long("hybrid")
+                .help("Process rules first, then use AI for unmatched messages")
+                .takes_value(false)
+                .conflicts_with("ai"),
+        )
+        .arg(
+            Arg::with_name("model")
+                .long("model")
+                .value_name("MODEL")
+                .help("AI model to use for classification (default: mistral-nemo-instruct-2407)")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("lmstudio_url")
+                .long("lmstudio-url")
+                .value_name("URL")
+                .help("URL for LMStudio API (default: http://localhost:1234)")
+                .takes_value(true),
+        )
+        .arg(
             Arg::with_name("yes")
                 .short("y")
                 .long("yes")
@@ -130,7 +151,10 @@ fn main() {
     let target_folder = matches.value_of("target_folder").unwrap();
     let message_limit = matches.value_of("limit").map(|l| l.parse::<usize>().unwrap_or(0));
     let use_ai = matches.is_present("ai");
+    let use_hybrid = matches.is_present("hybrid");
     let skip_confirmation = matches.is_present("yes");
+    let model = matches.value_of("model");
+    let lmstudio_url = matches.value_of("lmstudio_url").map(String::from);
 
     debug!("Server: {}:{}", server, port);
     debug!("Username: {}", username);
@@ -140,6 +164,10 @@ fn main() {
         debug!("Message limit: {}", limit);
     }
     debug!("Using AI: {}", use_ai);
+    debug!("Using hybrid mode: {}", use_hybrid);
+    if let Some(url) = &lmstudio_url {
+        debug!("LMStudio URL: {}", url);
+    }
 
     // Read config file if provided
     let config = if let Some(config_path) = matches.value_of("config") {
@@ -183,9 +211,23 @@ fn main() {
     };
 
     // Create appropriate filter engine based on command line options
-    let filter_engine: Box<dyn FilterEngine> = if use_ai {
+    let filter_engine: Box<dyn FilterEngine> = if use_hybrid {
+        info!("Using hybrid filtering (rules + AI)");
+        Box::new(HybridFilter::new(
+            config.unwrap(),
+            folders.clone(),
+            target_folder.to_string(),
+            lmstudio_url,
+            model,
+        ))
+    } else if use_ai {
         info!("Using AI-based email filtering");
-        Box::new(AiFilter::new(folders.clone(), target_folder.to_string(), "http://localhost:1234".to_string()))
+        Box::new(AiFilter::new(
+            folders.clone(), 
+            target_folder.to_string(), 
+            lmstudio_url,
+            model,
+        ))
     } else {
         info!("Using rule-based email filtering");
         Box::new(RuleBasedFilter::new(
