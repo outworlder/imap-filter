@@ -69,6 +69,13 @@ fn main() {
                 .default_value("INBOX"),
         )
         .arg(
+            Arg::with_name("limit")
+                .long("limit")
+                .value_name("LIMIT")
+                .help("Maximum number of messages to process (default: process all messages)")
+                .takes_value(true),
+        )
+        .arg(
             Arg::with_name("target_folder")
                 .long("target")
                 .value_name("TARGET_FOLDER")
@@ -113,12 +120,16 @@ fn main() {
     let username = matches.value_of("username").unwrap();
     let source_folder = matches.value_of("source_folder").unwrap();
     let target_folder = matches.value_of("target_folder").unwrap();
+    let message_limit = matches.value_of("limit").map(|l| l.parse::<usize>().unwrap_or(0));
     let use_ai = matches.is_present("ai");
 
     debug!("Server: {}:{}", server, port);
     debug!("Username: {}", username);
     debug!("Source folder: {}", source_folder);
     debug!("Target folder: {}", target_folder);
+    if let Some(limit) = message_limit {
+        debug!("Message limit: {}", limit);
+    }
     debug!("Using AI: {}", use_ai);
 
     // Read config file if provided
@@ -165,7 +176,7 @@ fn main() {
     // Create appropriate filter engine based on command line options
     let filter_engine: Box<dyn FilterEngine> = if use_ai {
         info!("Using AI-based email filtering");
-        Box::new(AiFilter::new(folders.clone(), target_folder.to_string()))
+        Box::new(AiFilter::new(folders.clone(), target_folder.to_string(), "http://localhost:1234".to_string()))
     } else {
         info!("Using rule-based email filtering");
         Box::new(RuleBasedFilter::new(
@@ -215,7 +226,7 @@ fn main() {
     // Process emails
     info!("User confirmed. Proceeding with email processing");
     let email_processor = EmailProcessor::new(filter_engine);
-    match email_processor.process_emails(&mut imap_client, source_folder) {
+    match email_processor.process_emails(&mut imap_client, source_folder, message_limit) {
         Ok(moved_counts) => {
             print_results(&moved_counts);
         }
