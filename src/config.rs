@@ -10,6 +10,19 @@ pub struct Config {
     pub subject_rules: Vec<SubjectRule>,
     #[serde(default)]
     pub sender_rules: Vec<SenderRule>,
+    #[serde(default)]
+    pub ai_prompt: Option<String>,
+    // Command line parameters that can be specified in config
+    pub server: Option<String>,
+    pub port: Option<u16>,
+    pub username: Option<String>,
+    pub source_folder: Option<String>,
+    pub target_folder: Option<String>,
+    pub model: Option<String>,
+    pub lmstudio_url: Option<String>,
+    pub use_ai: Option<bool>,
+    pub use_hybrid: Option<bool>,
+    pub skip_confirmation: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -40,6 +53,17 @@ impl Config {
         Config {
             subject_rules: vec![],
             sender_rules: vec![],
+            ai_prompt: None,
+            server: None,
+            port: None,
+            username: None,
+            source_folder: None,
+            target_folder: None,
+            model: None,
+            lmstudio_url: None,
+            use_ai: None,
+            use_hybrid: None,
+            skip_confirmation: None,
         }
     }
 
