@@ -1,0 +1,123 @@
+# Email Organizer
+
+A modular Rust application that automatically organizes emails by filtering newsletters and other messages based on rules or AI classification.
+
+## Features
+
+- Rule-based filtering using regex patterns for subjects and senders
+- Built-in newsletter detection
+- Optional AI-based classification for emails
+- Configurable source and target folders
+- TOML-based configuration for custom filtering rules
+- Beautiful progress bars using the indicatif library
+- Parallel progress visualization for multiple folders
+
+## Project Structure
+
+```
+src/
+├── main.rs             # Application entry point and CLI handling
+├── config.rs           # Configuration structures and loading
+├── filter.rs           # Filter engines (rule-based and AI-based)
+├── email.rs            # Email processing logic
+└── imap_client.rs      # IMAP server communication
+```
+
+## Usage
+
+Set the password as an environment variable:
+
+```bash
+export EMAIL_PASSWORD="your_password_here"
+```
+
+Basic usage with default newsletter detection:
+
+```bash
+email-organizer --server imap.example.com --username user@example.com --target Newsletters
+```
+
+With a custom configuration file:
+
+```bash
+email-organizer --server imap.example.com --username user@example.com --target Newsletters --config config.toml
+```
+
+Using AI-based classification:
+
+```bash
+email-organizer --server imap.example.com --username user@example.com --target Newsletters --ai
+```
+
+Full command options:
+
+```
+USAGE:
+    email-organizer [OPTIONS] --server <SERVER> --username <USERNAME> --target <TARGET_FOLDER>
+
+OPTIONS:
+    -s, --server <SERVER>                 IMAP server hostname
+    -p, --port <PORT>                     IMAP server port (default: 993)
+    -u, --username <USERNAME>             Email username
+    --source <SOURCE_FOLDER>              Source folder to scan (default: INBOX)
+    --target <TARGET_FOLDER>              Default target folder for newsletters
+    -c, --config <CONFIG_FILE>            Path to TOML config file with subject regex patterns
+    --ai                                  Use AI to classify emails instead of rule-based filtering
+    -h, --help                            Print help information
+    -V, --version                         Print version information
+```
+
+## Configuration File Format
+
+```toml
+# config.toml example
+
+[[subject_rules]]
+pattern = "(?i)newsletter"
+description = "Company newsletters"
+folder = "Newsletters"
+
+[[subject_rules]]
+pattern = "(?i)digest|weekly update"
+description = "Weekly summaries"
+folder = "Updates"
+
+[[sender_rules]]
+pattern = "news@example\\.com"
+description = "Example.com news"
+folder = "Company/News"
+
+[[sender_rules]]
+pattern = ".*@newsletter\\.com"
+description = "Newsletter service"
+# No folder specified, will use default target folder
+```
+
+## Building from Source
+
+```bash
+cargo build --release
+```
+
+## Implementing Real AI Integration
+
+The current AI filter includes a placeholder implementation. To implement real AI integration:
+
+1. Update the `call_external_ai` method in `filter.rs` to:
+   - Format email data for the AI service
+   - Make API calls to your preferred AI service (e.g., OpenAI, Google Vertex AI)
+   - Parse the AI's response to determine the target folder
+
+2. Add necessary dependencies to `Cargo.toml`:
+   - HTTP client (e.g., `reqwest`)
+   - JSON processing (e.g., `serde_json`)
+   - API client for your chosen AI service
+
+3. Consider adding additional command-line arguments for:
+   - AI service API keys
+   - Model selection
+   - Confidence thresholds
+
+## License
+
+MIT
