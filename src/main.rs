@@ -14,6 +14,7 @@ mod filter;
 mod imap_client;
 
 use clap::{App, Arg};
+use console::{style, Term};
 use log::{debug, error, info};
 use std::collections::HashMap;
 use std::env;
@@ -96,6 +97,13 @@ fn main() {
                 .help("Use AI to classify emails instead of rule-based filtering")
                 .takes_value(false),
         )
+        .arg(
+            Arg::with_name("yes")
+                .short("y")
+                .long("yes")
+                .help("Skip confirmation prompt and proceed automatically")
+                .takes_value(false),
+        )
         .get_matches();
 
     debug!("Command line arguments parsed successfully");
@@ -122,6 +130,7 @@ fn main() {
     let target_folder = matches.value_of("target_folder").unwrap();
     let message_limit = matches.value_of("limit").map(|l| l.parse::<usize>().unwrap_or(0));
     let use_ai = matches.is_present("ai");
+    let skip_confirmation = matches.is_present("yes");
 
     debug!("Server: {}:{}", server, port);
     debug!("Username: {}", username);
@@ -199,28 +208,34 @@ fn main() {
     // Collect all unique target folders
     let unique_folders = filter_engine.get_target_folders();
 
-    // Ask for confirmation
-    info!("Asking for user confirmation");
-    println!("\nTarget folders that will be used:");
+    // Show target folders
+    println!("\n{}", style("TARGET FOLDERS:").yellow().bold());
     for folder in &unique_folders {
-        println!("  - {}", folder);
+        println!("\t• {}", style(folder).green());
     }
 
-    print!(
-        "\nDo you want to proceed with organizing emails from '{}'? (y/n): ",
-        source_folder
-    );
-    io::stdout().flush().unwrap();
+    // Ask for confirmation if not skipped
+    if !skip_confirmation {
+        info!("Asking for user confirmation");
+        print!(
+            "\nDo you want to proceed with organizing emails from '{}'? (y/n): ",
+            source_folder
+        );
+        io::stdout().flush().unwrap();
 
-    let mut input = String::new();
-    io::stdin()
-        .read_line(&mut input)
-        .expect("Failed to read line");
+        let mut input = String::new();
+        io::stdin()
+            .read_line(&mut input)
+            .expect("Failed to read line");
 
-    if input.trim().to_lowercase() != "y" {
-        info!("User cancelled the operation");
-        println!("Operation cancelled by user.");
-        process::exit(0);
+        if input.trim().to_lowercase() != "y" {
+            info!("User cancelled the operation");
+            println!("Operation cancelled by user.");
+            process::exit(0);
+        }
+    } else {
+        info!("Skipping confirmation due to --yes flag");
+        println!("\n{}", style("⟳ Proceeding automatically...").cyan().bold());
     }
 
     // Process emails
@@ -254,21 +269,63 @@ fn print_program_info(
     info!("Source folder: {}", source_folder);
     info!("Default target folder: {}", target_folder);
 
-    // Print information to console
-    println!("=== Email Newsletter Organizer ===");
-    println!("IMAP Server: {}:{}", server, port);
-    println!("Username: {}", username);
-    println!("Source folder: {}", source_folder);
-    println!("Default target folder: {}", target_folder);
+    // Print information to console with improved formatting
+    println!("\n{}", style("┌─────────────────────────────────────────────────┐").cyan().bold());
+    println!("{}", style("│          EMAIL NEWSLETTER ORGANIZER             │").cyan().bold());
+    println!("{}\n", style("└─────────────────────────────────────────────────┘").cyan().bold());
 
-    // Print filter info
+    println!("{}", style("CONNECTION DETAILS:").yellow().bold());
+    println!("\t• Server:\t{}", style(format!("{}:{}", server, port)).green());
+    println!("\t• Username:\t{}", style(username).green());
+    println!("\t• Source:\t{}", style(source_folder).green());
+    println!("\t• Target:\t{}", style(target_folder).green());
+
+    // Print filter info in a cleaner format
     filter.print_info();
 
-    // Display available folders
+    // Display available folders with categorization
     info!("Displaying available folders");
-    println!("\nAvailable folders on the server:");
+    println!("\n{}", style("AVAILABLE FOLDERS:").yellow().bold());
+    
+    // Print folders with nicer formatting
+    println!("\t{}", style(format!("Total folders: {}", folders.len())).cyan());
+    
+    println!("\n\t{} | {}", style("#").blue().bold(), style("FOLDER NAME").blue().bold());
+    println!("\t{}+{}", style("--").blue(), style("---------------------------------------------------------").blue());
+    
+    let mut prev_was_top_level = false;
+    
     for (i, folder) in folders.iter().enumerate() {
-        println!("  {}. {}", i + 1, folder);
+        // Print folder with padding based on nesting level
+        let indent = folder.matches('/').count();
+        let padding = "\t".repeat(indent);
+        
+        if indent == 0 {
+            // Add an extra line before top-level folders (except the first one)
+            if i > 0 && prev_was_top_level {
+                println!();
+            }
+            prev_was_top_level = true;
+        } else {
+            prev_was_top_level = false;
+        }
+        
+        let folder_name = folder.split('/').last().unwrap_or(folder);
+        
+        if indent == 0 {
+            // Top-level folders in bold
+            println!("\t{:2} | {}{}", 
+                style(i + 1).blue(), 
+                padding, 
+                style(folder_name).bold()
+            );
+        } else {
+            println!("\t{:2} | {}{}", 
+                style(i + 1).blue(), 
+                padding, 
+                folder_name
+            );
+        }
     }
 }
 
@@ -277,15 +334,23 @@ fn print_results(moved_counts: &HashMap<String, usize>) {
 
     if total_moved > 0 {
         info!("Successfully moved {} messages", total_moved);
-        println!("\nSuccessfully moved {} messages:", total_moved);
+        println!("\n{}", style("SUMMARY:").yellow().bold());
+        println!("\t{} {}", 
+            style(format!("✓ Successfully moved {} message{}:", total_moved, if total_moved > 1 { "s" } else { "" })).green().bold(),
+            style("✉").cyan()
+        );
 
         for (folder, count) in moved_counts {
             if *count > 0 {
-                println!("  - {} to '{}'", count, folder);
+                println!("\t\t{} to '{}'", 
+                    style(format!("{} {}", count, if *count > 1 { "messages" } else { "message" })).cyan(),
+                    style(folder).green()
+                );
             }
         }
     } else {
         info!("No messages found to move");
-        println!("No messages found to move");
+        println!("\n{}", style("SUMMARY:").yellow().bold());
+        println!("\t{}", style("✗ No messages found to move").yellow());
     }
 }

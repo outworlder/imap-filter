@@ -1,6 +1,7 @@
 // email.rs
+use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
-use log::{debug, info};
+use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::io::{self, Write};
 
@@ -27,7 +28,26 @@ impl EmailProcessor {
         imap_client.create_folders(&target_folders)?;
 
         // Fetch messages from source folder
-        let mut messages = imap_client.fetch_messages(source_folder)?;
+        let result = imap_client.fetch_messages(source_folder);
+        
+        let mut messages = match result {
+            Ok(msgs) => msgs,
+            Err(e) => {
+                // Check if it's the "No matching messages" error
+                if e.to_string().contains("No matching messages") {
+                    warn!("No messages found in folder '{}'", source_folder);
+                    println!("\n{}", style("SCAN RESULTS:").yellow().bold());
+                    println!("\t{} {}", 
+                        style("✗ No messages found in folder").yellow(),
+                        style(source_folder).yellow().bold()
+                    );
+                    return Ok(HashMap::new());
+                } else {
+                    // Propagate other errors
+                    return Err(e);
+                }
+            }
+        };
         
         // Apply message limit if specified
         if let Some(limit) = message_limit {
@@ -41,6 +61,7 @@ impl EmailProcessor {
 
         // First pass: identify messages to move
         info!("Analyzing {} messages for classification", total_messages);
+        println!("\n{}", style(format!("Scanning {} messages for processing...", total_messages)).cyan().bold());
         let mut matched_messages: Vec<MatchResult> = Vec::new();
 
         // Create a nice progress bar for analysis
@@ -77,8 +98,13 @@ impl EmailProcessor {
 
         // Display match info
         let total_matched = matched_messages.len();
+        println!("\n{}", style("SCAN RESULTS:").yellow().bold());
+        
         if total_matched > 0 {
-            println!("\nFound {} messages to move:", total_matched);
+            println!("\t{} {}", 
+                style(format!("✓ Found {} message{} to move:", total_matched, if total_matched > 1 { "s" } else { "" })).green().bold(),
+                style("📧").cyan()
+            );
 
             let mut folder_counts: HashMap<String, usize> = HashMap::new();
             for matched in &matched_messages {
@@ -89,27 +115,40 @@ impl EmailProcessor {
             }
 
             for (folder, count) in &folder_counts {
-                println!("  - {} to '{}' folder", count, folder);
+                println!("\t  → {} to '{}'", 
+                    style(format!("{} {}", count, if *count > 1 { "messages" } else { "message" })).cyan(),
+                    style(folder).green()
+                );
             }
 
             if matched_messages.len() <= 20 {
-                println!("\nMatched messages:");
+                println!("\n{}", style("MATCHED EMAILS:").yellow().bold());
                 for (i, matched) in matched_messages.iter().enumerate() {
                     println!(
-                        "  {}. UID {}: {} (Reason: {})",
-                        i + 1,
-                        matched.uid,
-                        matched.target_folder,
-                        matched.reason
+                        "\t{}. {} {}: {} ({})",
+                        style(i + 1).blue(),
+                        style("UID").dim(),
+                        style(&matched.uid).cyan(),
+                        style(&matched.target_folder).green(),
+                        style(&matched.reason).dim()
                     );
                 }
             }
         } else {
-            println!("No messages matched the filtering criteria");
+            println!("\t{}", style("✗ No messages matched the filtering criteria").yellow());
             return Ok(HashMap::new());
         }
 
         // Move messages
-        imap_client.move_messages(source_folder, &messages_by_folder)
+        println!("\n{}", style("MOVING EMAILS:").yellow().bold());
+        println!("\t{}", style("⟳ Moving messages to their target folders...").cyan());
+        
+        let result = imap_client.move_messages(source_folder, &messages_by_folder);
+        
+        if result.is_ok() {
+            println!("\t{}", style("✓ All messages successfully moved").green().bold());
+        }
+        
+        result
     }
 }

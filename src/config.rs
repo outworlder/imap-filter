@@ -1,4 +1,5 @@
 // config.rs
+use console::style;
 use serde::Deserialize;
 use std::fs::File;
 use std::io::Read;
@@ -68,42 +69,54 @@ impl Config {
     }
 
     pub fn print_info(&self) {
-        println!(
-            "Using {} subject regex rules and {} sender regex rules",
-            self.subject_rules.len(),
-            self.sender_rules.len()
-        );
-
         if !self.subject_rules.is_empty() {
-            println!("\nConfigured subject patterns:");
+            println!("\n\t{}", style("SUBJECT PATTERNS:").cyan().bold());
             for (i, rule) in self.subject_rules.iter().enumerate() {
                 let folder_info = if let Some(folder) = &rule.folder {
-                    format!(" -> {}", folder)
+                    format!(" → {}", style(folder).green())
                 } else {
                     "".to_string()
                 };
 
                 if let Some(desc) = &rule.description {
-                    println!("  {}. {} - {}{}", i + 1, rule.pattern, desc, folder_info);
+                    println!("\t  {}. {} - {}{}", 
+                        style(i + 1).blue(), 
+                        style(&rule.pattern).magenta(), 
+                        style(desc).dim(), 
+                        folder_info
+                    );
                 } else {
-                    println!("  {}. {}{}", i + 1, rule.pattern, folder_info);
+                    println!("\t  {}. {}{}", 
+                        style(i + 1).blue(), 
+                        style(&rule.pattern).magenta(), 
+                        folder_info
+                    );
                 }
             }
         }
 
         if !self.sender_rules.is_empty() {
-            println!("\nConfigured sender patterns:");
+            println!("\n\t{}", style("SENDER PATTERNS:").cyan().bold());
             for (i, rule) in self.sender_rules.iter().enumerate() {
                 let folder_info = if let Some(folder) = &rule.folder {
-                    format!(" -> {}", folder)
+                    format!(" → {}", style(folder).green())
                 } else {
                     "".to_string()
                 };
 
                 if let Some(desc) = &rule.description {
-                    println!("  {}. {} - {}{}", i + 1, rule.pattern, desc, folder_info);
+                    println!("\t  {}. {} - {}{}", 
+                        style(i + 1).blue(), 
+                        style(&rule.pattern).magenta(), 
+                        style(desc).dim(), 
+                        folder_info
+                    );
                 } else {
-                    println!("  {}. {}{}", i + 1, rule.pattern, folder_info);
+                    println!("\t  {}. {}{}", 
+                        style(i + 1).blue(), 
+                        style(&rule.pattern).magenta(), 
+                        folder_info
+                    );
                 }
             }
         }

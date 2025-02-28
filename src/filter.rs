@@ -1,6 +1,7 @@
 // filter.rs
 use crate::config::{Config, SenderRule, SubjectRule};
 use crate::imap_client::Message;
+use console::style;
 use log::{debug, trace, warn};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -231,10 +232,12 @@ impl FilterEngine for RuleBasedFilter {
     }
 
     fn print_info(&self) {
+        println!("{}", style("MODE:").yellow().bold());
         println!(
-            "Using rule-based filtering with {} subject rules and {} sender rules",
-            self.config.subject_rules.len(),
-            self.config.sender_rules.len()
+            "\t• {}: {} subject rules, {} sender rules",
+            style("Rule-based filtering").magenta().bold(),
+            style(self.config.subject_rules.len().to_string()).cyan(),
+            style(self.config.sender_rules.len().to_string()).cyan()
         );
 
         self.config.print_info();
@@ -279,7 +282,7 @@ impl AiFilter {
             \
             EXAMPLE OF CORRECT RESPONSE:
             {{\
-                \"target_folder\": \"Notifications\",\
+                \"target_folder\": \"INBOX/Notifications\",\
                 \"reason\": \"Subject contains 'Notification' and sender is 'notifications@github.com', that's a notification email\"\
             }}\
             \
@@ -466,11 +469,14 @@ impl FilterEngine for AiFilter {
     }
 
     fn print_info(&self) {
-        println!("Using AI-based email classification");
-        println!("Default target folder: {}", self.default_target_folder);
+        println!("{}", style("MODE:").yellow().bold());
+        println!("\t• {}", style("AI-based email classification").magenta().bold());
+        println!("\t  {} {}", style("Model:").cyan(), style(&self.model).green());
+        println!("\t  {} {}", style("Default target:").cyan(), style(&self.default_target_folder).green());
         println!(
-            "Available folders for AI decisions: {}",
-            self.available_folders.len()
+            "\t  {} {}",
+            style("Available folders:").cyan(),
+            style(self.available_folders.len().to_string()).green()
         );
     }
 }
