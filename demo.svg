@@ -1,44 +1,53 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400">
-  <!-- Terminal Background -->
-  <rect width="800" height="400" fill="#2E3440" rx="10" ry="10" />
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="900" height="800" version="1.1" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100%" height="100%" rx="10" fill="#282c34"/>
+    
+    <!-- Terminal Title Bar -->
+    <rect x="0" y="0" width="900" height="30" rx="10" fill="#21252b"/>
+    <circle cx="20" cy="15" r="6" fill="#ff5f56"/>
+    <circle cx="40" cy="15" r="6" fill="#ffbd2e"/>
+    <circle cx="60" cy="15" r="6" fill="#27c93f"/>
+    <text x="80" y="20" font-family="Monaco, monospace" font-size="12" fill="#abb2bf">imap-filter — zsh</text>
+    
+    <!-- Terminal Content -->
+    <foreignObject x="10" y="40" width="880" height="750">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Monaco, monospace; font-size: 14px; color: #abb2bf; white-space: pre;">
+<tspan style="color: #e5c07b">┌─────────────────────────────────────────────────┐
+│          EMAIL NEWSLETTER ORGANIZER             │
+└─────────────────────────────────────────────────┘</tspan>
 
-  <!-- Terminal Header -->
-  <rect x="0" y="0" width="800" height="30" fill="#3B4252" rx="10" ry="10" />
-  <circle cx="20" cy="15" r="7" fill="#BF616A" />
-  <circle cx="40" cy="15" r="7" fill="#EBCB8B" />
-  <circle cx="60" cy="15" r="7" fill="#A3BE8C" />
-  <text x="400" y="20" text-anchor="middle" fill="#ECEFF4" font-family="monospace" font-size="12">Email Organizer</text>
+<tspan style="color: #61afef">Scanning 12540 messages for processing...</tspan>
+[00:00:00] [██████████████████████████████████████████████████] 12540/12540
 
-  <!-- Terminal Content -->
-  <text x="20" y="50" fill="#ECEFF4" font-family="monospace" font-size="14">Scanning 342 messages for processing...</text>
+<tspan style="color: #61afef">Scanning 10 messages for processing...</tspan>
 
-  <!-- Progress Bar 1 - Scanning -->
-  <rect x="20" y="60" width="760" height="20" fill="#4C566A" rx="3" ry="3" />
-  <rect x="20" y="60" width="532" height="20" fill="#5E81AC" rx="3" ry="3" />
-  <text x="400" y="75" text-anchor="middle" fill="#ECEFF4" font-family="monospace" font-size="12">⠼ [00:04:26] [████████████████████████████░░░░░░░░░░░] 239/342 (00:01:52)</text>
+<tspan style="color: #61afef">Processing 10 messages with rules...</tspan>
+[00:00:00] [██████████████████████████████████████████████████] 10/10 messages analyzed with rules
 
-  <text x="20" y="100" fill="#ECEFF4" font-family="monospace" font-size="14">Moving 87 messages to their target folders...</text>
+<tspan style="color: #61afef">Processing 10 unmatched messages with AI...</tspan>
+[00:00:17] [██████████████████████████████████████████████████] 10/10 messages analyzed with AI
 
-  <!-- Progress Bar 2 - Newsletters -->
-  <rect x="20" y="115" width="760" height="20" fill="#4C566A" rx="3" ry="3" />
-  <rect x="20" y="115" width="380" height="20" fill="#88C0D0" rx="3" ry="3" />
-  <text x="400" y="130" text-anchor="middle" fill="#ECEFF4" font-family="monospace" font-size="12">Newsletters: ⠏ [00:01:38] [███████████████████░░░░░░░░░░░░░] 34/68 (00:01:29)</text>
+<tspan style="color: #98c379">MOVING AI-MATCHED MESSAGES:</tspan>
 
-  <!-- Progress Bar 3 - Promotions -->
-  <rect x="20" y="145" width="760" height="20" fill="#4C566A" rx="3" ry="3" />
-  <rect x="20" y="145" width="608" height="20" fill="#8FBCBB" rx="3" ry="3" />
-  <text x="400" y="160" text-anchor="middle" fill="#ECEFF4" font-family="monospace" font-size="12">Promotions: ⠹ [00:01:05] [████████████████████████████░░░] 12/15 (00:00:18)</text>
+<tspan style="color: #61afef">⟳ Moving 2 messages to 'AIUnsure'</tspan>
 
-  <!-- Progress Bar 4 - Updates -->
-  <rect x="20" y="175" width="760" height="20" fill="#81A1C1" rx="3" ry="3" />
-  <text x="400" y="190" text-anchor="middle" fill="#ECEFF4" font-family="monospace" font-size="12">Updates: ✓ Moved 4 messages to 'Updates'</text>
+Moving 2 messages to their target folders...
+AIUnsure: [00:00:00] [████████████████████████████████████████] 2/2
 
-  <!-- Results -->
-  <text x="20" y="220" fill="#A3BE8C" font-family="monospace" font-size="14">Successfully moved 87 messages:</text>
-  <text x="40" y="245" fill="#ECEFF4" font-family="monospace" font-size="14">- 68 to 'Newsletters'</text>
-  <text x="40" y="270" fill="#ECEFF4" font-family="monospace" font-size="14">- 15 to 'Promotions'</text>
-  <text x="40" y="295" fill="#ECEFF4" font-family="monospace" font-size="14">- 4 to 'Updates'</text>
+[00:00:01] [██████████████████████████████████████████████████] 2/2 messages moved
 
-  <text x="20" y="330" fill="#EBCB8B" font-family="monospace" font-size="14">Do you want to organize another folder? (y/n):</text>
-  <text x="380" y="330" fill="#ECEFF4" font-family="monospace" font-size="14">_</text>
+<tspan style="color: #61afef">⟳ Moving 8 messages to 'INBOX/Notifications'</tspan>
+
+Moving 8 messages to their target folders...
+INBOX/Notifications: [00:00:00] [████████████████████████████████████████] 8/8
+
+[00:00:00] [██████████████████████████████████████████████████] 8/8 messages moved
+
+<tspan style="color: #98c379">✓ AI-matched messages moved successfully</tspan>
+
+<tspan style="color: #98c379">SUMMARY:</tspan>
+<tspan style="color: #98c379">✓ Successfully moved 10 messages:</tspan>
+        8 messages to 'INBOX/Notifications'
+        2 messages to 'AIUnsure'</div>
+    </foreignObject>
 </svg>
