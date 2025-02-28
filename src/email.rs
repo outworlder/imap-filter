@@ -3,7 +3,6 @@ use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info, warn};
 use std::collections::HashMap;
-use std::any::Any;
 
 use crate::filter::{FilterEngine, MatchResult, HybridFilter};
 use crate::imap_client::ImapClient;

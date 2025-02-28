@@ -542,24 +542,6 @@ impl HybridFilter {
             ai_filter: AiFilter::new(available_folders, default_target_folder, lmstudio_url, model),
         }
     }
-
-    // Process messages in two passes - first rules, then AI
-    pub fn process_in_two_passes<'a>(&self, messages: &'a [Message]) -> (Vec<(&'a Message, MatchResult)>, Vec<&'a Message>) {
-        let mut matched = Vec::new();
-        let mut unmatched = Vec::new();
-
-        // First pass: Rule-based filtering
-        for message in messages {
-            if let Some(result) = self.rule_filter.classify_message(message) {
-                debug!("Message matched rule-based filter: {}", result.reason);
-                matched.push((message, result));
-            } else {
-                unmatched.push(message);
-            }
-        }
-
-        (matched, unmatched)
-    }
 }
 
 impl FilterEngine for HybridFilter {
