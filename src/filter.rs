@@ -292,6 +292,7 @@ impl AiFilter {
         default_target_folder: String, 
         lmstudio_url: Option<String>,
         model: Option<&str>,
+        ai_prompt: Option<String>,
     ) -> Self {
         let model = model.map(String::from).unwrap_or_else(|| Self::DEFAULT_MODEL.to_string());
         let lmstudio_url = lmstudio_url.unwrap_or_else(|| Self::DEFAULT_LMSTUDIO_URL.to_string());
@@ -301,7 +302,7 @@ impl AiFilter {
             lmstudio_url
         };
         let folders_list = available_folders.join(", ");
-        let system_prompt = format!(
+        let system_prompt = ai_prompt.unwrap_or_else(|| format!(
             "You are an email classification assistant. Your ONLY task is to assign emails to EXISTING folders. \
             ===AVAILABLE FOLDERS=== \
             The ONLY valid folders you can use are listed below. You MUST use EXACT spelling, capitalization, and the EXACT path as shown. \
@@ -348,7 +349,7 @@ impl AiFilter {
             ", 
             folders_list,
             default_target_folder
-        );
+        ));
 
         Self {
             available_folders,
@@ -538,8 +539,14 @@ impl HybridFilter {
         model: Option<&str>,
     ) -> Self {
         Self {
-            rule_filter: RuleBasedFilter::new(config, default_target_folder.clone()),
-            ai_filter: AiFilter::new(available_folders, default_target_folder, lmstudio_url, model),
+            rule_filter: RuleBasedFilter::new(config.clone(), default_target_folder.clone()),
+            ai_filter: AiFilter::new(
+                available_folders,
+                default_target_folder,
+                lmstudio_url,
+                model,
+                config.ai_prompt,
+            ),
         }
     }
 }
