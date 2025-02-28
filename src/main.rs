@@ -43,8 +43,8 @@ fn main() {
                 .short("s")
                 .long("server")
                 .value_name("SERVER")
-                .help("IMAP server hostname")
-                .required(true),
+                .help("IMAP server hostname (required if not in config)")
+                .required_unless("config"),
         )
         .arg(
             Arg::with_name("port")
@@ -52,22 +52,22 @@ fn main() {
                 .long("port")
                 .value_name("PORT")
                 .help("IMAP server port (default: 993)")
-                .default_value("993"),
+                .takes_value(true),
         )
         .arg(
             Arg::with_name("username")
                 .short("u")
                 .long("username")
                 .value_name("USERNAME")
-                .help("Email username")
-                .required(true),
+                .help("Email username (required if not in config)")
+                .required_unless("config"),
         )
         .arg(
             Arg::with_name("source_folder")
                 .long("source")
                 .value_name("SOURCE_FOLDER")
                 .help("Source folder to scan (default: INBOX)")
-                .default_value("INBOX"),
+                .takes_value(true),
         )
         .arg(
             Arg::with_name("limit")
@@ -80,15 +80,15 @@ fn main() {
             Arg::with_name("target_folder")
                 .long("target")
                 .value_name("TARGET_FOLDER")
-                .help("Default target folder for newsletters")
-                .required(true),
+                .help("Default target folder for newsletters (required if not in config)")
+                .required_unless("config"),
         )
         .arg(
             Arg::with_name("config")
                 .short("c")
                 .long("config")
                 .value_name("CONFIG_FILE")
-                .help("Path to TOML config file with subject regex patterns")
+                .help("Path to TOML config file with rules and optional settings")
                 .takes_value(true),
         )
         .arg(
@@ -143,32 +143,6 @@ fn main() {
         }
     };
 
-    // Get command line parameters
-    let server = matches.value_of("server").unwrap();
-    let port: u16 = matches.value_of("port").unwrap().parse().unwrap_or(993);
-    let username = matches.value_of("username").unwrap();
-    let source_folder = matches.value_of("source_folder").unwrap();
-    let target_folder = matches.value_of("target_folder").unwrap();
-    let message_limit = matches.value_of("limit").map(|l| l.parse::<usize>().unwrap_or(0));
-    let use_ai = matches.is_present("ai");
-    let use_hybrid = matches.is_present("hybrid");
-    let skip_confirmation = matches.is_present("yes");
-    let model = matches.value_of("model");
-    let lmstudio_url = matches.value_of("lmstudio_url").map(String::from);
-
-    debug!("Server: {}:{}", server, port);
-    debug!("Username: {}", username);
-    debug!("Source folder: {}", source_folder);
-    debug!("Target folder: {}", target_folder);
-    if let Some(limit) = message_limit {
-        debug!("Message limit: {}", limit);
-    }
-    debug!("Using AI: {}", use_ai);
-    debug!("Using hybrid mode: {}", use_hybrid);
-    if let Some(url) = &lmstudio_url {
-        debug!("LMStudio URL: {}", url);
-    }
-
     // Read config file if provided
     let config = if let Some(config_path) = matches.value_of("config") {
         debug!("Reading config file: {}", config_path);
@@ -186,15 +160,66 @@ fn main() {
                 process::exit(1);
             }
         }
-    } else if !use_ai {
+    } else if !matches.is_present("ai") {
         debug!("No config file provided, using only built-in newsletter detection");
         Some(Config::default())
     } else {
         None
     };
 
+    // Get command line parameters with config fallbacks
+    let config_ref = config.as_ref();
+    
+    let server = matches.value_of("server")
+        .or_else(|| config_ref.and_then(|c| c.server.as_deref()))
+        .expect("Server is required");
+
+    let port: u16 = matches.value_of("port")
+        .map(|p| p.parse().unwrap_or(993))
+        .or_else(|| config_ref.and_then(|c| c.port))
+        .unwrap_or(993);
+
+    let username = matches.value_of("username")
+        .or_else(|| config_ref.and_then(|c| c.username.as_deref()))
+        .expect("Username is required");
+
+    let source_folder = matches.value_of("source_folder")
+        .or_else(|| config_ref.and_then(|c| c.source_folder.as_deref()))
+        .unwrap_or("INBOX");
+
+    let target_folder = matches.value_of("target_folder")
+        .or_else(|| config_ref.and_then(|c| c.target_folder.as_deref()))
+        .expect("Target folder is required");
+
+    let message_limit = matches.value_of("limit")
+        .map(|l| l.parse::<usize>().unwrap_or(0));
+
+    let use_ai = matches.is_present("ai") || config_ref.map(|c| c.use_ai.unwrap_or(false)).unwrap_or(false);
+    let use_hybrid = matches.is_present("hybrid") || config_ref.map(|c| c.use_hybrid.unwrap_or(false)).unwrap_or(false);
+    let skip_confirmation = matches.is_present("yes") || config_ref.map(|c| c.skip_confirmation.unwrap_or(false)).unwrap_or(false);
+
+    let model = matches.value_of("model")
+        .or_else(|| config_ref.and_then(|c| c.model.as_deref()));
+
+    let lmstudio_url = matches.value_of("lmstudio_url")
+        .map(String::from)
+        .or_else(|| config_ref.and_then(|c| c.lmstudio_url.clone()));
+
+    debug!("Server: {}:{}", server, port);
+    debug!("Username: {}", username);
+    debug!("Source folder: {}", source_folder);
+    debug!("Target folder: {}", target_folder);
+    if let Some(limit) = message_limit {
+        debug!("Message limit: {}", limit);
+    }
+    debug!("Using AI: {}", use_ai);
+    debug!("Using hybrid mode: {}", use_hybrid);
+    if let Some(url) = &lmstudio_url {
+        debug!("LMStudio URL: {}", url);
+    }
+
     // Create IMAP client
-    let mut imap_client = ImapClient::new(server, port, username, &password);
+    let mut imap_client = ImapClient::new(&server, port, &username, &password);
 
     // Connect and get folder information
     info!("Connecting to server to retrieve folder list");
@@ -214,35 +239,37 @@ fn main() {
     let filter_engine: Box<dyn FilterEngine> = if use_hybrid {
         info!("Using hybrid filtering (rules + AI)");
         Box::new(HybridFilter::new(
-            config.unwrap(),
+            config.clone().unwrap(),
             folders.clone(),
             target_folder.to_string(),
-            lmstudio_url,
+            lmstudio_url.clone(),
             model,
         ))
     } else if use_ai {
         info!("Using AI-based email filtering");
+        let config = config.clone().unwrap_or_else(Config::default);
         Box::new(AiFilter::new(
             folders.clone(), 
             target_folder.to_string(), 
-            lmstudio_url,
+            lmstudio_url.clone(),
             model,
+            config.ai_prompt,
         ))
     } else {
         info!("Using rule-based email filtering");
         Box::new(RuleBasedFilter::new(
-            config.unwrap(),
+            config.clone().unwrap(),
             target_folder.to_string(),
         ))
     };
 
     // Print information about what the program will do
     print_program_info(
-        server,
+        &server,
         port,
-        username,
-        source_folder,
-        target_folder,
+        &username,
+        &source_folder,
+        &target_folder,
         &filter_engine,
         &folders,
     );
@@ -283,7 +310,7 @@ fn main() {
     // Process emails
     info!("User confirmed. Proceeding with email processing");
     let email_processor = EmailProcessor::new(filter_engine);
-    match email_processor.process_emails(&mut imap_client, source_folder, message_limit) {
+    match email_processor.process_emails(&mut imap_client, &source_folder, message_limit) {
         Ok(moved_counts) => {
             print_results(&moved_counts);
         }
