@@ -1,12 +1,40 @@
-# ... existing content ...
+# IMAP Filter
 
-## Configuration File Format
+A Rust-based IMAP email organizer that uses rules and optional AI to automatically sort your emails into folders.
+
+## Getting Started
+
+1. Clone the repository
+2. Copy the example configuration:
+   ```bash
+   cp config.example.toml config.toml
+   ```
+3. Edit `config.toml` with your settings:
+   - Update IMAP server details
+   - Configure your email sorting rules
+   - Optionally enable AI features
+
+## Configuration
+
+The configuration can be provided in two ways:
+1. Via `config.toml` file (recommended for most settings)
+2. Via environment variables (recommended for sensitive data)
+
+### Environment Variables
+
+Sensitive information can be provided via environment variables:
+```bash
+export IMAP_PASSWORD="your_password"
+export IMAP_USERNAME="your.email@example.com"  # overrides config file
+export IMAP_SERVER="imap.example.com"          # overrides config file
+```
+
+### Configuration File Format
 
 ```toml
 # Server configuration
-server = "imap.fastmail.com"
-port = 993
-username = "user@fastmail.com"
+server = "imap.example.com"     # or use IMAP_SERVER env var
+username = "user@example.com"   # or use IMAP_USERNAME env var
 target_folder = "INBOX/Newsletters"
 source_folder = "INBOX"  # Optional, defaults to "INBOX"
 
@@ -17,44 +45,43 @@ model = "gemma-2b-it"   # Optional AI model name
 lmstudio_url = "http://localhost:1234"  # Optional LMStudio URL
 skip_confirmation = true  # Skip confirmation prompt (same as --yes)
 
-# Optional AI prompt for customizing the AI's behavior
-ai_prompt = '''
-You are an email classification assistant...
-'''
-
 # Email classification rules
 [[subject_rules]]
 pattern = "(?i)newsletter"
 description = "Company newsletters"
 folder = "Newsletters"
 
-[[subject_rules]]
-pattern = "(?i)digest|weekly update"
-description = "Weekly summaries"
-folder = "Updates"
-
 [[sender_rules]]
 pattern = "news@example\\.com"
 description = "Example.com news"
 folder = "Company/News"
-
-[[sender_rules]]
-pattern = ".*@newsletter\\.com"
-description = "Newsletter service"
-# No folder specified, will use default target folder
 ```
 
-You can specify settings either in the config file or via command line arguments. Command line arguments take precedence over config file settings. For example:
+You can specify settings either in the config file or via command line arguments. Command line arguments take precedence over config file settings.
+
+## Security Notes
+
+1. Never commit sensitive information to the repository:
+   - IMAP passwords
+   - Email credentials
+   - Private keys
+   - Personal configuration
+
+2. Use environment variables for sensitive data
+3. The `config.toml` in the repository should only contain your rules and non-sensitive settings
+4. If you need to share your configuration, use `config.example.toml` as a template
+
+## Command Line Usage
 
 ```bash
-# Using only config file
-email-organizer --config config.toml
+# Using config file (recommended)
+imap-filter --config config.toml
 
 # Override some config settings
-email-organizer --config config.toml --target "Different/Folder" --model "different-model"
+imap-filter --config config.toml --target "Different/Folder"
 
-# Full command line usage (no config file)
-email-organizer --server imap.example.com --username user@example.com --target Newsletters
+# Using environment variables
+IMAP_PASSWORD="secret" imap-filter --config config.toml
 ```
 
 # ... rest of the content ... 

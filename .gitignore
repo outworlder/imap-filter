@@ -9,3 +9,13 @@
 .vscode/
 *.swp
 *.swo 
+
+# SSH Keys
+id_rsa*
+*.pem
+*.key
+
+# Local configuration
+config.local.toml
+.env
+*.env 

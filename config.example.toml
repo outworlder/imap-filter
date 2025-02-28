@@ -1,0 +1,19 @@
+# Example configuration file
+# Copy this to config.toml and update with your values
+
+server = "imap.example.com"
+username = "your.email@example.com"
+target_folder = "INBOX/Newsletters"
+use_hybrid = true
+
+[[subject_rules]]
+pattern = "(?i)Price alert:"
+description = "Price alerts"
+folder = "INBOX/Notifications/Trades"
+
+[[sender_rules]]
+pattern = "(?i)^no[-_]?reply@.*"
+description = "Automated emails"
+folder = "INBOX/Notifications"
+
+# Add more rules as needed... 
