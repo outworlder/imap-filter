@@ -126,6 +126,12 @@ fn main() {
                 .help("Skip confirmation prompt and proceed automatically")
                 .takes_value(false),
         )
+        .arg(
+            Arg::with_name("watch")
+                .long("watch")
+                .help("Enable continuous monitoring mode for new messages")
+                .takes_value(false),
+        )
         .get_matches();
 
     debug!("Command line arguments parsed successfully");
@@ -311,14 +317,33 @@ fn main() {
     // Process emails
     info!("User confirmed. Proceeding with email processing");
     let mut email_processor = EmailProcessor::new(filter_engine);
-    match email_processor.process_emails(&mut imap_client, &source_folder, message_limit) {
-        Ok(moved_counts) => {
-            print_results(&moved_counts);
+
+    if matches.is_present("watch") {
+        info!("Starting continuous monitoring mode");
+        println!("\n{}", style("WATCH MODE:").yellow().bold());
+        println!("\t{}", style("Monitoring for new messages...").cyan());
+        
+        match email_processor.watch_folder(&mut imap_client, &source_folder) {
+            Ok(_) => {
+                // This should never return unless there's a graceful shutdown
+                info!("Watch mode terminated");
+            }
+            Err(e) => {
+                error!("Error in watch mode: {}", e);
+                eprintln!("Error monitoring emails: {}", e);
+                process::exit(1);
+            }
         }
-        Err(e) => {
-            error!("Error processing emails: {}", e);
-            eprintln!("Error processing emails: {}", e);
-            process::exit(1);
+    } else {
+        match email_processor.process_emails(&mut imap_client, &source_folder, message_limit) {
+            Ok(moved_counts) => {
+                print_results(&moved_counts);
+            }
+            Err(e) => {
+                error!("Error processing emails: {}", e);
+                eprintln!("Error processing emails: {}", e);
+                process::exit(1);
+            }
         }
     }
 }
