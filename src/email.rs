@@ -3,8 +3,9 @@ use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info, warn};
 use std::collections::HashMap;
+use std::error::Error;
 
-use crate::filter::{FilterEngine, MatchResult, HybridFilter};
+use crate::filter::{FilterEngine, MatchResult, HybridFilter, MatchSource, HybridMode};
 use crate::imap_client::ImapClient;
 
 pub struct EmailProcessor {
@@ -13,15 +14,15 @@ pub struct EmailProcessor {
 
 impl EmailProcessor {
     pub fn new(filter: Box<dyn FilterEngine>) -> Self {
-        Self { filter }
+        EmailProcessor { filter }
     }
 
     pub fn process_emails(
-        &self,
+        &mut self,
         imap_client: &mut ImapClient,
         source_folder: &str,
         message_limit: Option<usize>,
-    ) -> Result<HashMap<String, usize>, Box<dyn std::error::Error>> {
+    ) -> Result<HashMap<String, usize>, Box<dyn Error>> {
         // Ensure target folders exist
         let target_folders = self.filter.get_target_folders();
         imap_client.create_folders(&target_folders)?;
@@ -59,215 +60,151 @@ impl EmailProcessor {
         let total_messages = messages.len();
 
         info!("Analyzing {} messages for classification", total_messages);
-        println!("\n{}", style(format!("Scanning {} messages for processing...", total_messages)).cyan().bold());
-
+        
         // Check if we're using hybrid filtering
-        if let Some(hybrid_filter) = (&*self.filter).as_any().downcast_ref::<HybridFilter>() {
-            // First pass: Rule-based filtering
-            println!("\n{}", style(format!("Processing {} messages with rules...", total_messages)).cyan().bold());
-            
-            let progress_bar = ProgressBar::new(total_messages as u64);
-            progress_bar.set_style(
-                ProgressStyle::default_bar()
-                    .template("{spinner:.green} [{elapsed_precise}] [{bar:50.green/white}] {pos}/{len} messages analyzed with rules ({eta})")
-                    .unwrap()
-                    .progress_chars("█▓▒░")
-            );
-
-            let mut rule_matches = Vec::new();
-            let mut unmatched = Vec::new();
-
-            // Process each message with rules and update progress
-            for (i, message) in messages.iter().enumerate() {
-                if let Some(result) = hybrid_filter.rule_filter.classify_message(message) {
-                    debug!("Message matched rule-based filter: {}", result.reason);
-                    rule_matches.push((message, result));
-                } else {
-                    unmatched.push(message);
-                }
-                progress_bar.set_position(i as u64 + 1);
-            }
-
-            progress_bar.finish_with_message(format!(
-                "Rule analysis complete: {} of {} messages matched rules",
-                rule_matches.len(),
-                total_messages
-            ));
-
-            // Move rule-matched messages first
-            if !rule_matches.is_empty() {
-                println!("\n{}", style("MOVING RULE-MATCHED MESSAGES:").yellow().bold());
-
-                let mut messages_by_folder: HashMap<String, Vec<String>> = HashMap::new();
-                for (_, result) in &rule_matches {
-                    messages_by_folder
-                        .entry(result.target_folder.clone())
-                        .or_insert_with(Vec::new)
-                        .push(result.uid.clone());
-                }
-
-                // Move messages with progress bar for each folder
-                for (folder, uids) in &messages_by_folder {
-                    println!("\n\t{} {} to '{}'", 
-                        style("⟳ Moving").cyan(),
-                        style(format!("{} {}", uids.len(), if uids.len() > 1 { "messages" } else { "message" })).cyan(),
-                        style(folder).green()
-                    );
-
-                    let move_progress = ProgressBar::new(uids.len() as u64);
-                    move_progress.set_style(
-                        ProgressStyle::default_bar()
-                            .template("{spinner:.green} [{elapsed_precise}] [{bar:50.green/white}] {pos}/{len} messages moved ({eta})")
-                            .unwrap()
-                            .progress_chars("█▓▒░")
-                    );
-
-                    let mut single_folder_map = HashMap::new();
-                    single_folder_map.insert(folder.clone(), uids.clone());
-                    imap_client.move_messages(source_folder, &single_folder_map)?;
-                    move_progress.finish();
-                }
-
-                println!("\t{}", style("✓ Rule-matched messages moved successfully").green().bold());
-            }
-
-            // Second pass: AI-based filtering for unmatched messages
-            if !unmatched.is_empty() {
-                println!("\n{}", style(format!("Processing {} unmatched messages with AI...", unmatched.len())).cyan().bold());
-                
-                let ai_progress = ProgressBar::new(unmatched.len() as u64);
-                ai_progress.set_style(
-                    ProgressStyle::default_bar()
-                        .template("{spinner:.blue} [{elapsed_precise}] [{bar:50.blue/white}] {pos}/{len} messages analyzed with AI ({eta})")
-                        .unwrap()
-                        .progress_chars("█▓▒░")
-                );
-
-                let mut ai_matches: Vec<MatchResult> = Vec::new();
-                for (i, message) in unmatched.iter().enumerate() {
-                    if let Some(result) = hybrid_filter.ai_filter.classify_message(message) {
-                        ai_matches.push(result);
-                    }
-                    ai_progress.set_position(i as u64 + 1);
-                }
-
-                ai_progress.finish_with_message(format!(
-                    "AI analysis complete: {} matches found",
-                    ai_matches.len()
-                ));
-
-                // Move AI-matched messages
-                if !ai_matches.is_empty() {
-                    println!("\n{}", style("MOVING AI-MATCHED MESSAGES:").yellow().bold());
-
-                    let mut messages_by_folder: HashMap<String, Vec<String>> = HashMap::new();
-                    for result in &ai_matches {
-                        messages_by_folder
-                            .entry(result.target_folder.clone())
-                            .or_insert_with(Vec::new)
-                            .push(result.uid.clone());
-                    }
-
-                    // Move messages with progress bar for each folder
-                    for (folder, uids) in &messages_by_folder {
-                        println!("\n\t{} {} to '{}'", 
-                            style("⟳ Moving").cyan(),
-                            style(format!("{} {}", uids.len(), if uids.len() > 1 { "messages" } else { "message" })).cyan(),
-                            style(folder).green()
-                        );
-
-                        let move_progress = ProgressBar::new(uids.len() as u64);
-                        move_progress.set_style(
-                            ProgressStyle::default_bar()
-                                .template("{spinner:.blue} [{elapsed_precise}] [{bar:50.blue/white}] {pos}/{len} messages moved ({eta})")
-                                .unwrap()
-                                .progress_chars("█▓▒░")
-                        );
-
-                        let mut single_folder_map = HashMap::new();
-                        single_folder_map.insert(folder.clone(), uids.clone());
-                        imap_client.move_messages(source_folder, &single_folder_map)?;
-                        move_progress.finish();
-                    }
-
-                    println!("\t{}", style("✓ AI-matched messages moved successfully").green().bold());
-                }
-
-                // Return combined results
-                let mut total_moved: HashMap<String, usize> = HashMap::new();
-                for (_, result) in rule_matches {
-                    *total_moved.entry(result.target_folder).or_insert(0) += 1;
-                }
-                for result in ai_matches {
-                    *total_moved.entry(result.target_folder).or_insert(0) += 1;
-                }
-                Ok(total_moved)
-            } else {
-                // Only rule-matched messages
-                let mut total_moved: HashMap<String, usize> = HashMap::new();
-                for (_, result) in rule_matches {
-                    *total_moved.entry(result.target_folder).or_insert(0) += 1;
-                }
-                Ok(total_moved)
-            }
+        let is_hybrid = self.filter.as_any().is::<HybridFilter>();
+        
+        if is_hybrid {
+            println!("\n{}", style(format!("Processing {} messages with rules first...", total_messages)).cyan().bold());
         } else {
-            // Non-hybrid filtering - process all messages with the single filter
-            let progress_bar = ProgressBar::new(total_messages as u64);
-            progress_bar.set_style(
+            println!("\n{}", style(format!("Scanning {} messages for processing...", total_messages)).cyan().bold());
+        }
+
+        let progress_bar = ProgressBar::new(total_messages as u64);
+        progress_bar.set_style(
+            ProgressStyle::default_bar()
+                .template(if is_hybrid {
+                    "{spinner:.green} [{elapsed_precise}] [{bar:50.green/white}] {pos}/{len} messages analyzed with rules ({eta})"
+                } else {
+                    "{spinner:.green} [{elapsed_precise}] [{bar:50.green/white}] {pos}/{len} messages analyzed ({eta})"
+                })
+                .unwrap()
+                .progress_chars("█▓▒░")
+        );
+
+        let mut matched_messages: Vec<MatchResult> = Vec::new();
+        let mut rule_matches = 0;
+        let mut ai_matches = 0;
+        let mut unmatched_messages = Vec::new();
+
+        // First pass: Rule-based filtering
+        for (i, message) in messages.iter().enumerate() {
+            if let Some(result) = self.filter.classify_message(message) {
+                match result.source {
+                    MatchSource::Rule => {
+                        rule_matches += 1;
+                        debug!("Message matched rule-based filter: {}", result.reason);
+                        matched_messages.push(result);
+                    }
+                    MatchSource::AI => {
+                        // This shouldn't happen in rule phase
+                        warn!("Unexpected AI match during rule phase - this may indicate a filter configuration issue");
+                    }
+                }
+            } else {
+                unmatched_messages.push(message);
+            }
+            progress_bar.set_position(i as u64 + 1);
+        }
+
+        progress_bar.finish_with_message(format!(
+            "Rule analysis complete: {} of {} messages matched rules",
+            rule_matches,
+            total_messages
+        ));
+
+        // Second pass: AI-based filtering (only in hybrid mode for unmatched messages)
+        if is_hybrid && !unmatched_messages.is_empty() {
+            // We need to set the mode before we start processing
+            if let Some(hybrid_filter) = self.filter.as_any_mut().downcast_mut::<HybridFilter>() {
+                hybrid_filter.set_mode(HybridMode::AI);
+                debug!("Switched to AI mode for processing {} unmatched messages", unmatched_messages.len());
+            }
+
+            println!("\n{}", style(format!("Processing {} unmatched messages with AI...", unmatched_messages.len())).cyan().bold());
+            
+            let ai_progress = ProgressBar::new(unmatched_messages.len() as u64);
+            ai_progress.set_style(
                 ProgressStyle::default_bar()
-                    .template("{spinner:.green} [{elapsed_precise}] [{bar:50.green/white}] {pos}/{len} messages analyzed ({eta})")
+                    .template("{spinner:.blue} [{elapsed_precise}] [{bar:50.blue/white}] {pos}/{len} messages analyzed with AI ({eta})")
                     .unwrap()
                     .progress_chars("█▓▒░")
             );
 
-            let mut matched_messages: Vec<MatchResult> = Vec::new();
-            for (i, message) in messages.iter().enumerate() {
+            for (i, message) in unmatched_messages.iter().enumerate() {
                 if let Some(result) = self.filter.classify_message(message) {
-                    matched_messages.push(result);
+                    match result.source {
+                        MatchSource::AI => {
+                            ai_matches += 1;
+                            debug!("Message matched AI-based filter: {}", result.reason);
+                            matched_messages.push(result);
+                        }
+                        MatchSource::Rule => {
+                            // This shouldn't happen in AI phase
+                            warn!("Unexpected rule match during AI phase - this may indicate a filter configuration issue");
+                        }
+                    }
                 }
-                progress_bar.set_position(i as u64 + 1);
+                ai_progress.set_position(i as u64 + 1);
             }
 
-            progress_bar.finish_with_message(format!(
-                "Analysis complete: {} of {} messages matched filters",
-                matched_messages.len(),
-                total_messages
+            ai_progress.finish_with_message(format!(
+                "AI analysis complete: {} matches found",
+                ai_matches
             ));
 
-            // Move matched messages
-            if !matched_messages.is_empty() {
-                println!("\n{}", style("MOVING MESSAGES:").yellow().bold());
-                println!("\t{}", style("⟳ Moving matched messages...").cyan());
-
-                let mut messages_by_folder: HashMap<String, Vec<String>> = HashMap::new();
-                for result in &matched_messages {
-                    messages_by_folder
-                        .entry(result.target_folder.clone())
-                        .or_insert_with(Vec::new)
-                        .push(result.uid.clone());
-                }
-
-                // Display match info
-                for (folder, uids) in &messages_by_folder {
-                    println!("\t  → {} to '{}'", 
-                        style(format!("{} {}", uids.len(), if uids.len() > 1 { "messages" } else { "message" })).cyan(),
-                        style(folder).green()
-                    );
-                }
-
-                // Move messages
-                imap_client.move_messages(source_folder, &messages_by_folder)?;
-                println!("\t{}", style("✓ Messages moved successfully").green().bold());
-
-                // Return results
-                let mut total_moved: HashMap<String, usize> = HashMap::new();
-                for result in matched_messages {
-                    *total_moved.entry(result.target_folder).or_insert(0) += 1;
-                }
-                Ok(total_moved)
-            } else {
-                Ok(HashMap::new())
+            // Reset back to Rules mode
+            if let Some(hybrid_filter) = self.filter.as_any_mut().downcast_mut::<HybridFilter>() {
+                hybrid_filter.set_mode(HybridMode::Rules);
+                debug!("Reset to Rules mode after AI processing");
             }
+        }
+
+        // Move matched messages
+        if !matched_messages.is_empty() {
+            if is_hybrid {
+                println!("\n{}", style("MOVING MATCHED MESSAGES:").yellow().bold());
+                println!("\t{} {}", 
+                    style(format!("✓ {} messages matched by rules", rule_matches)).green(),
+                    if rule_matches > 0 { style("⚡").cyan() } else { style("").cyan() }
+                );
+                println!("\t{} {}", 
+                    style(format!("✓ {} messages matched by AI", ai_matches)).blue(),
+                    if ai_matches > 0 { style("🤖").cyan() } else { style("").cyan() }
+                );
+            } else {
+                println!("\n{}", style("MOVING MESSAGES:").yellow().bold());
+            }
+            println!("\t{}", style("⟳ Moving matched messages...").cyan());
+
+            let mut messages_by_folder: HashMap<String, Vec<String>> = HashMap::new();
+            for result in &matched_messages {
+                messages_by_folder
+                    .entry(result.target_folder.clone())
+                    .or_insert_with(Vec::new)
+                    .push(result.uid.clone());
+            }
+
+            // Display match info
+            for (folder, uids) in &messages_by_folder {
+                println!("\t  → {} to '{}'", 
+                    style(format!("{} {}", uids.len(), if uids.len() > 1 { "messages" } else { "message" })).cyan(),
+                    style(folder).green()
+                );
+            }
+
+            // Move messages
+            imap_client.move_messages(source_folder, &messages_by_folder)?;
+            println!("\t{}", style("✓ Messages moved successfully").green().bold());
+
+            // Return results
+            let mut total_moved: HashMap<String, usize> = HashMap::new();
+            for result in matched_messages {
+                *total_moved.entry(result.target_folder).or_insert(0) += 1;
+            }
+            Ok(total_moved)
+        } else {
+            Ok(HashMap::new())
         }
     }
 }

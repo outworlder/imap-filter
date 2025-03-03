@@ -310,14 +310,14 @@ fn main() {
 
     // Process emails
     info!("User confirmed. Proceeding with email processing");
-    let email_processor = EmailProcessor::new(filter_engine);
+    let mut email_processor = EmailProcessor::new(filter_engine);
     match email_processor.process_emails(&mut imap_client, &source_folder, message_limit) {
         Ok(moved_counts) => {
             print_results(&moved_counts);
         }
         Err(e) => {
             error!("Error processing emails: {}", e);
-            eprintln!("Error: {}", e);
+            eprintln!("Error processing emails: {}", e);
             process::exit(1);
         }
     }
