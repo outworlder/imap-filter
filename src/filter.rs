@@ -46,16 +46,24 @@ pub struct MatchResult {
     pub uid: String,
     pub reason: String,
     pub target_folder: String,
+    pub source: MatchSource,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum MatchSource {
+    Rule,
+    AI,
 }
 
 // FilterEngine trait defines the interface for all filter implementations
 pub trait FilterEngine: std::any::Any {
-    fn classify_message(&self, message: &Message) -> Option<MatchResult>;
+    fn classify_message(&mut self, message: &Message) -> Option<MatchResult>;
     fn get_target_folders(&self) -> Vec<String>;
     fn print_info(&self);
     
-    // Add method for downcasting
+    // Add methods for downcasting
     fn as_any(&self) -> &dyn std::any::Any;
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
 
 // Rule-based filtering implementation
@@ -173,7 +181,7 @@ impl RuleBasedFilter {
 }
 
 impl FilterEngine for RuleBasedFilter {
-    fn classify_message(&self, message: &Message) -> Option<MatchResult> {
+    fn classify_message(&mut self, message: &Message) -> Option<MatchResult> {
         let mut target_folder = self.default_target_folder.clone();
 
         // Check headers for newsletter indicators
@@ -183,6 +191,7 @@ impl FilterEngine for RuleBasedFilter {
                 uid: message.uid.to_string(),
                 reason,
                 target_folder,
+                source: MatchSource::Rule,
             });
         }
 
@@ -201,6 +210,7 @@ impl FilterEngine for RuleBasedFilter {
                 uid: message.uid.to_string(),
                 reason,
                 target_folder,
+                source: MatchSource::Rule,
             });
         }
 
@@ -220,6 +230,7 @@ impl FilterEngine for RuleBasedFilter {
                     uid: message.uid.to_string(),
                     reason,
                     target_folder,
+                    source: MatchSource::Rule,
                 });
             }
         }
@@ -245,6 +256,10 @@ impl FilterEngine for RuleBasedFilter {
     }
     
     fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
 }
@@ -482,7 +497,7 @@ impl AiFilter {
 }
 
 impl FilterEngine for AiFilter {
-    fn classify_message(&self, message: &Message) -> Option<MatchResult> {
+    fn classify_message(&mut self, message: &Message) -> Option<MatchResult> {
         // Call the AI service to classify the message
         let response = tokio::runtime::Runtime::new().unwrap().block_on(self.call_external_ai(message));
         if let Ok(Some((target_folder, reason))) = response {
@@ -495,6 +510,7 @@ impl FilterEngine for AiFilter {
                 uid: message.uid.to_string(),
                 reason,
                 target_folder,
+                source: MatchSource::AI,
             });
         }
 
@@ -522,12 +538,23 @@ impl FilterEngine for AiFilter {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 // Hybrid filtering implementation that combines rules and AI
 pub struct HybridFilter {
     pub rule_filter: RuleBasedFilter,
     pub ai_filter: AiFilter,
+    mode: HybridMode,
+}
+
+#[derive(PartialEq)]
+pub enum HybridMode {
+    Rules,
+    AI,
 }
 
 impl HybridFilter {
@@ -547,21 +574,27 @@ impl HybridFilter {
                 model,
                 config.ai_prompt,
             ),
+            mode: HybridMode::Rules, // Start with rules mode
         }
+    }
+
+    pub fn set_mode(&mut self, mode: HybridMode) {
+        self.mode = mode;
     }
 }
 
 impl FilterEngine for HybridFilter {
-    fn classify_message(&self, message: &Message) -> Option<MatchResult> {
-        // First try rule-based filtering
-        if let Some(result) = self.rule_filter.classify_message(message) {
-            debug!("Message matched rule-based filter: {}", result.reason);
-            return Some(result);
+    fn classify_message(&mut self, message: &Message) -> Option<MatchResult> {
+        match self.mode {
+            HybridMode::Rules => {
+                // Only try rule-based filtering in Rules mode
+                self.rule_filter.classify_message(message)
+            }
+            HybridMode::AI => {
+                // Only try AI-based filtering in AI mode
+                self.ai_filter.classify_message(message)
+            }
         }
-
-        // If no rule matches, try AI-based filtering
-        debug!("No rule matches found, trying AI classification");
-        self.ai_filter.classify_message(message)
     }
 
     fn get_target_folders(&self) -> Vec<String> {
@@ -597,6 +630,10 @@ impl FilterEngine for HybridFilter {
     }
     
     fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
 }
