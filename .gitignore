@@ -19,3 +19,6 @@ id_rsa*
 config.local.toml
 .env
 *.env 
+
+# Log files
+/logs/ 
