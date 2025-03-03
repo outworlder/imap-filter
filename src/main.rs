@@ -12,6 +12,7 @@ mod config;
 mod email;
 mod filter;
 mod imap_client;
+mod ai_logger;
 
 use clap::{App, Arg};
 use console::style;
