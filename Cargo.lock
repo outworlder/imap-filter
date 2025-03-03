@@ -653,6 +653,7 @@ dependencies = [
 name = "imap_filter"
 version = "0.0.1"
 dependencies = [
+ "chrono",
  "clap",
  "console",
  "env_logger",
