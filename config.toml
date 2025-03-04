@@ -121,6 +121,7 @@ INSTRUCTIONS:
 4. Provide a brief reason
 5. Remember that the objective is to clean up your inbox, so if the email is not important, move it to another folder.
 6. Many emails are notifications, but attempt to classify them in one of the other folders first.
+7. If the email appears to be from a person, not an organization or automated system, leave it in INBOX.
 
 Your response must be ONLY this JSON format:
 {
