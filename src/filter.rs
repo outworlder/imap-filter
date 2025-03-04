@@ -282,26 +282,34 @@ impl AiFilter {
     const DEFAULT_LMSTUDIO_URL: &'static str = "http://localhost:1234";
 
     fn extract_json_content(content: &str) -> &str {
-        // If the content contains ```json or ``` markers, extract just the JSON part
-        if let Some(start) = content.find("```json") {
-            // Look for the closing ``` after the start position
-            if let Some(end) = content[start + 7..].find("```") {
-                // Skip the ```json marker and any whitespace
-                let json_start = start + 7;
-                let content = content[json_start..json_start + end].trim();
-                return content;
+        // Find the first opening curly brace
+        if let Some(start) = content.find('{') {
+            // Find the matching closing brace by counting braces
+            let mut brace_count = 1;
+            let mut end = start + 1;
+            
+            for (i, c) in content[start + 1..].char_indices() {
+                match c {
+                    '{' => brace_count += 1,
+                    '}' => {
+                        brace_count -= 1;
+                        if brace_count == 0 {
+                            end = start + i + 2; // +2 to include the closing brace
+                            break;
+                        }
+                    }
+                    _ => continue,
+                }
             }
-        } else if let Some(start) = content.find("```") {
-            // Look for the closing ``` after the start position
-            if let Some(end) = content[start + 3..].find("```") {
-                // Skip the ``` marker and any whitespace
-                let json_start = start + 3;
-                let content = content[json_start..json_start + end].trim();
-                return content;
+            
+            // Only return the content if we found a matching closing brace
+            if brace_count == 0 {
+                return &content[start..end];
             }
         }
-        // If no markers found or invalid format, return the original content
-        content.trim()
+        
+        // If no valid JSON object found, return empty JSON object
+        "{}"
     }
 
     pub fn new(
