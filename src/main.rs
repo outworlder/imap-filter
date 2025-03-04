@@ -13,6 +13,7 @@ mod email;
 mod filter;
 mod imap_client;
 mod ai_logger;
+mod logging;
 
 use clap::{App, Arg};
 use console::style;
@@ -28,8 +29,8 @@ use filter::{AiFilter, FilterEngine, RuleBasedFilter, HybridFilter};
 use imap_client::ImapClient;
 
 fn main() {
-    // Initialize the logger
-    env_logger::init();
+    // Initialize the logger with our custom configuration
+    logging::init_logging();
 
     info!("Starting Email Organizer");
     debug!("Initializing command line argument parser");

@@ -9,9 +9,9 @@ license = "MIT"
 
 [dependencies]
 clap = "2.33"
-env_logger = "0.9"
+env_logger = { version = "0.9", features = ["termcolor"] }
 imap = "2.4.1"
-log = "0.4"
+log = { version = "0.4", features = ["std"] }
 native-tls = "0.2"
 regex = "1.5"
 serde = { version = "1.0", features = ["derive"] }
