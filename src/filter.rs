@@ -81,44 +81,66 @@ impl RuleBasedFilter {
         }
     }
 
-    fn is_newsletter(&self, headers: &str) -> bool {
+    fn has_newsletter_headers(&self, headers: &str) -> bool {
         trace!("Checking headers for newsletter indicators");
 
-        // Check for common newsletter headers
-        if headers.contains("List-ID:") {
-            trace!("Found List-ID header");
-            return true;
-        }
-        if headers.contains("List-Unsubscribe:") {
-            trace!("Found List-Unsubscribe header");
-            return true;
-        }
-        if headers.contains("X-Mailchimp-ID:") {
-            trace!("Found X-Mailchimp-ID header");
-            return true;
-        }
-        if headers.contains("X-Campaign") {
-            trace!("Found X-Campaign header");
-            return true;
-        } else {
-            trace!("No headers detected")
-        }
+        let newsletter_headers = [
+            "List-ID:",
+            "List-Unsubscribe:",
+            "X-Mailchimp-ID:",
+            "X-Campaign",
+        ];
 
-        // Check for common newsletter senders
+        for header in newsletter_headers.iter() {
+            if headers.contains(header) {
+                trace!("Found {} header", header);
+                return true;
+            }
+        }
+        
+        trace!("No newsletter headers detected");
+        false
+    }
+
+    fn has_newsletter_sender(&self, headers: &str) -> bool {
         let sender_regex =
             Regex::new(r"(?i)From:.*?(newsletter|digest|updates|weekly|daily|monthly|bulletin)")
                 .unwrap();
-        if sender_regex.is_match(headers) {
+        
+        let matches = sender_regex.is_match(headers);
+        if matches {
             trace!("Found newsletter keyword in From: header");
+        }
+        matches
+    }
+
+    fn has_newsletter_subject(&self, headers: &str) -> bool {
+        let subject_regex =
+            Regex::new(r"(?i)Subject:.*?(newsletter|digest|updates|weekly|daily|monthly|bulletin)")
+                .unwrap();
+        
+        let matches = subject_regex.is_match(headers);
+        if matches {
+            trace!("Found newsletter keyword in Subject: header");
+        }
+        matches
+    }
+
+    fn is_newsletter(&self, headers: &str) -> bool {
+        trace!("Checking for newsletter indicators");
+
+        // Check for common newsletter headers
+        if self.has_newsletter_headers(headers) {
+            return true;
+        }
+
+        // Check for common newsletter senders
+        if self.has_newsletter_sender(headers) {
             return true;
         }
 
         // Check for common newsletter subjects
-        let subject_regex =
-            Regex::new(r"(?i)Subject:.*?(newsletter|digest|updates|weekly|daily|monthly|bulletin)")
-                .unwrap();
-        if subject_regex.is_match(headers) {
-            trace!("Found newsletter keyword in Subject: header");
+        if self.has_newsletter_subject(headers) {
             return true;
         }
 
@@ -277,9 +299,177 @@ pub struct AiFilter {
 
 impl AiFilter {
     const MAX_RETRIES: u32 = 3;
-    const RETRY_DELAY_MS: u64 = 1000; // 1 second delay between retries
-    const DEFAULT_MODEL: &'static str = "mistral-nemo-instruct-2407";
-    const DEFAULT_LMSTUDIO_URL: &'static str = "http://localhost:1234";
+    const RETRY_DELAY_MS: u64 = 1000;
+    const MAX_INVALID_FOLDER_RETRIES: u32 = 2;
+
+    // Helper function to create the message content for AI
+    fn create_message_content(message: &Message) -> String {
+        format!(
+            "Please analyze this email:\nFrom: {}\nSubject: {}\n\nHeaders:\n{}\n\nBody:\n{}",
+            message.sender,
+            message.subject,
+            message.headers,
+            message.body.as_ref().cloned().unwrap_or_else(|| "".to_string())
+        )
+    }
+
+    // Helper function to create the AI request
+    fn create_ai_request(&self, content: String) -> AiRequest {
+        AiRequest {
+            model: self.model.clone(),
+            messages: vec![
+                ChatMessage {
+                    role: "system".to_string(),
+                    content: self.system_prompt.clone(),
+                },
+                ChatMessage {
+                    role: "user".to_string(),
+                    content,
+                },
+            ],
+            temperature: 0.3,
+            max_tokens: 500,
+            top_p: 1.0,
+            frequency_penalty: 0.0,
+            presence_penalty: 0.0,
+        }
+    }
+
+    // Helper function to validate the target folder
+    fn validate_target_folder(&self, folder: &str, message: &Message, attempt: u32) -> bool {
+        debug!("Validating suggested folder: '{}'", folder);
+        let contains_folder = self.available_folders.contains(&folder.to_string());
+        debug!("Folder validation result for '{}': {}", folder, contains_folder);
+        
+        if !contains_folder {
+            warn!(
+                "AI suggested invalid folder '{}' for message '{}' (attempt {}/{})",
+                folder,
+                message.subject,
+                attempt,
+                Self::MAX_INVALID_FOLDER_RETRIES + 1
+            );
+            
+            // Print similar folders to help diagnose the issue
+            for available_folder in &self.available_folders {
+                if available_folder.contains(folder) || 
+                   folder.contains(available_folder) ||
+                   available_folder.split('/').last() == folder.split('/').last() {
+                    debug!("Possible similar folder: '{}'", available_folder);
+                }
+            }
+        }
+        
+        contains_folder
+    }
+
+    // Helper function to handle AI response parsing
+    async fn handle_ai_response(
+        &mut self,
+        response: reqwest::Response,
+        message: &Message,
+        attempts: u32,
+        invalid_folder_attempts: u32,
+    ) -> Result<Option<(String, String)>, Error> {
+        match response.json::<AiResponse>().await {
+            Ok(ai_response) => {
+                if let Some(choice) = ai_response.choices.first() {
+                    // Log the AI's reasoning
+                    if let Err(e) = self.ai_logger.log_reasoning(&message.subject, &choice.message.content) {
+                        warn!("Failed to log AI reasoning: {}", e);
+                    }
+                    
+                    let json_content = Self::extract_json_content(&choice.message.content);
+                    match serde_json::from_str::<ModelResponse>(json_content) {
+                        Ok(parsed) => {
+                            if self.validate_target_folder(&parsed.target_folder, message, invalid_folder_attempts) {
+                                return Ok(Some((parsed.target_folder, parsed.reason)));
+                            } else if invalid_folder_attempts <= Self::MAX_INVALID_FOLDER_RETRIES {
+                                debug!("Retrying with the same message...");
+                                return Ok(None);
+                            } else {
+                                warn!("Exceeded maximum retries for invalid folder suggestions - skipping message");
+                                println!("\t{}", style(format!(
+                                    "✗ Failed to process '{}' - AI suggested invalid folder",
+                                    message.subject
+                                )).red());
+                                return Ok(None);
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "Failed to parse AI response for message '{}' (attempt {}/{}): {}",
+                                message.subject,
+                                attempts,
+                                Self::MAX_RETRIES,
+                                e
+                            );
+                            log::debug!("Raw response: {}", choice.message.content);
+                            
+                            if attempts == Self::MAX_RETRIES {
+                                println!("\t{}", style(format!(
+                                    "✗ Failed to process '{}' - AI response format error",
+                                    message.subject
+                                )).red());
+                            }
+                            return Ok(None);
+                        }
+                    }
+                }
+                Ok(None)
+            }
+            Err(e) => {
+                log::warn!("Failed to parse AI response: {}", e);
+                if attempts == Self::MAX_RETRIES {
+                    println!("\t{}", style(format!(
+                        "✗ Failed to process '{}' - AI service error",
+                        message.subject
+                    )).red());
+                }
+                Ok(None)
+            }
+        }
+    }
+
+    async fn call_external_ai(&mut self, message: &Message) -> Result<Option<(String, String)>, Error> {
+        let client = reqwest::Client::new();
+        let content = Self::create_message_content(message);
+        let request = self.create_ai_request(content);
+        
+        let mut attempts = 0;
+        let mut invalid_folder_attempts = 0;
+
+        while attempts < Self::MAX_RETRIES {
+            attempts += 1;
+            
+            debug!("Calling LM Studio API for classification (attempt {})", attempts);
+            trace!("Message subject: {}", message.subject);
+            trace!("Message sender: {}", message.sender);
+
+            let response = client
+                .post(&self.lmstudio_url)
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send()
+                .await?;
+
+            if let Some(result) = self.handle_ai_response(response, message, attempts, invalid_folder_attempts).await? {
+                return Ok(Some(result));
+            }
+
+            invalid_folder_attempts += 1;
+            if attempts < Self::MAX_RETRIES {
+                sleep(Duration::from_millis(Self::RETRY_DELAY_MS)).await;
+            }
+        }
+
+        log::warn!(
+            "Failed to get valid response after {} attempts for message '{}'",
+            Self::MAX_RETRIES,
+            message.subject
+        );
+        Ok(None)
+    }
 
     fn extract_json_content(content: &str) -> &str {
         // Find the first opening curly brace
@@ -323,7 +513,7 @@ impl AiFilter {
         info!("AI reasoning will be logged to: {}", ai_logger.get_log_path().display());
         
         let folders_list = available_folders.join(", ");
-        let lmstudio_url = lmstudio_url.unwrap_or_else(|| Self::DEFAULT_LMSTUDIO_URL.to_string());
+        let lmstudio_url = lmstudio_url.unwrap_or_else(|| "http://localhost:1234".to_string());
         let lmstudio_url = if !lmstudio_url.ends_with("/v1/chat/completions") {
             format!("{}/v1/chat/completions", lmstudio_url.trim_end_matches('/'))
         } else {
@@ -383,163 +573,10 @@ impl AiFilter {
             available_folders,
             default_target_folder,
             lmstudio_url,
-            model: model.unwrap_or(Self::DEFAULT_MODEL).to_string(),
+            model: model.unwrap_or("mistral-nemo-instruct-2407").to_string(),
             system_prompt,
             ai_logger,
         }
-    }
-
-    async fn call_external_ai(&mut self, message: &Message) -> Result<Option<(String, String)>, Error> {
-        let client = reqwest::Client::new();
-        
-        // Create the message content
-        let content = format!(
-            "Please analyze this email:\nFrom: {}\nSubject: {}\n\nHeaders:\n{}\n\nBody:\n{}",
-            message.sender,
-            message.subject,
-            message.headers,
-            message.body.as_ref().cloned().unwrap_or_else(|| "".to_string())
-        );
-
-        let request = AiRequest {
-            model: self.model.clone(),
-            messages: vec![
-                ChatMessage {
-                    role: "system".to_string(),
-                    content: self.system_prompt.clone(),
-                },
-                ChatMessage {
-                    role: "user".to_string(),
-                    content,
-                },
-            ],
-            temperature: 0.3,
-            max_tokens: 500,
-            top_p: 1.0,
-            frequency_penalty: 0.0,
-            presence_penalty: 0.0,
-        };
-
-        let mut attempts = 0;
-        let mut invalid_folder_attempts = 0;
-        const MAX_INVALID_FOLDER_RETRIES: u32 = 2;
-
-        while attempts < Self::MAX_RETRIES {
-            attempts += 1;
-            
-            debug!("Calling LM Studio API for classification (attempt {})", attempts);
-            trace!("Message subject: {}", message.subject);
-            trace!("Message sender: {}", message.sender);
-
-            let response = client
-                .post(&self.lmstudio_url)
-                .header("Content-Type", "application/json")
-                .json(&request)
-                .send()
-                .await?;
-
-            // Parse the JSON response from the model's output
-            match response.json::<AiResponse>().await {
-                Ok(ai_response) => {
-                    if let Some(choice) = ai_response.choices.first() {
-                        // Log the AI's reasoning
-                        if let Err(e) = self.ai_logger.log_reasoning(&message.subject, &choice.message.content) {
-                            warn!("Failed to log AI reasoning: {}", e);
-                        }
-                        
-                        let json_content = Self::extract_json_content(&choice.message.content);
-                        match serde_json::from_str::<ModelResponse>(json_content) {
-                            Ok(parsed) => {
-                                // Verify the target folder is valid
-                                debug!("Validating suggested folder: '{}'", parsed.target_folder);
-                                let contains_folder = self.available_folders.contains(&parsed.target_folder);
-                                debug!("Folder validation result for '{}': {}", parsed.target_folder, contains_folder);
-                                
-                                if contains_folder {
-                                    return Ok(Some((parsed.target_folder, parsed.reason)));
-                                } else {
-                                    invalid_folder_attempts += 1;
-                                    warn!(
-                                        "AI suggested invalid folder '{}' for message '{}' (attempt {}/{}). Reason given: '{}'.",
-                                        parsed.target_folder,
-                                        message.subject,
-                                        invalid_folder_attempts,
-                                        MAX_INVALID_FOLDER_RETRIES + 1,
-                                        parsed.reason
-                                    );
-                                    
-                                    // Let's print a few folders that might be similar to help diagnose the issue
-                                    for folder in &self.available_folders {
-                                        if folder.contains(&parsed.target_folder) || 
-                                           parsed.target_folder.contains(folder) ||
-                                           folder.split('/').last() == parsed.target_folder.split('/').last() {
-                                            debug!("Possible similar folder: '{}'", folder);
-                                        }
-                                    }
-
-                                    if invalid_folder_attempts <= MAX_INVALID_FOLDER_RETRIES {
-                                        debug!("Retrying with the same message...");
-                                        continue;
-                                    } else {
-                                        warn!("Exceeded maximum retries for invalid folder suggestions - skipping message");
-                                        println!("\t{}", style(format!(
-                                            "✗ Failed to process '{}' - AI suggested invalid folder",
-                                            message.subject
-                                        )).red());
-                                        return Ok(None);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                // Log technical details to file only, not console
-                                log::warn!(
-                                    "Failed to parse AI response for message '{}' (attempt {}/{}): {}",
-                                    message.subject,
-                                    attempts,
-                                    Self::MAX_RETRIES,
-                                    e
-                                );
-                                log::debug!("Raw response: {}", choice.message.content);
-                                
-                                if attempts < Self::MAX_RETRIES {
-                                    log::debug!("Retrying in {} ms...", Self::RETRY_DELAY_MS);
-                                    sleep(Duration::from_millis(Self::RETRY_DELAY_MS)).await;
-                                    continue;
-                                }
-                                
-                                // On final attempt, show user-friendly message
-                                if attempts == Self::MAX_RETRIES {
-                                    println!("\t{}", style(format!(
-                                        "✗ Failed to process '{}' - AI response format error",
-                                        message.subject
-                                    )).red());
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    // Log technical details to file only
-                    log::warn!("Failed to parse AI response: {}", e);
-                    
-                    if attempts == Self::MAX_RETRIES {
-                        println!("\t{}", style(format!(
-                            "✗ Failed to process '{}' - AI service error",
-                            message.subject
-                        )).red());
-                    }
-                    continue;
-                }
-            }
-        }
-
-        // Log final failure to file only
-        log::warn!(
-            "Failed to get valid response after {} attempts for message '{}'",
-            Self::MAX_RETRIES,
-            message.subject
-        );
-        Ok(None)
     }
 }
 
